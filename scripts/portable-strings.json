@@ -1,0 +1,12 @@
+{
+  "launcherName": "启动小说编写器.vbs",
+  "readmeName": "使用说明.txt",
+  "appFolder": "app",
+  "readme": [
+    "便携版说明",
+    "1. 双击「启动小说编写器.vbs」启动（不弹出黑色命令窗口）。",
+    "2. 应用数据保存在 %APPDATA%\\novel-writer；小说文件夹由你在应用里选择。",
+    "3. 整个目录可复制到别处使用；不要删除 app 目录与 electron.exe。",
+    "4. 本便携版用未改名的 electron.exe 载入 app 目录，绕开本机 electron-builder 产物的原生启动崩溃（见 docs/DEVLOG.md）。"
+  ]
+}

@@ -1,0 +1,76 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { CharacterStore } from '../src/main/characters';
+import { crc32, parseCardJson, pngCardJson } from '../src/main/card-parser';
+import { characterContext, emptyCharacter } from '../src/core/characters';
+import { cardPng, v1, v2 } from './card-fixtures';
+
+test('PNG 图片卡与文字 JSON 解析 V1/V2/V3，优先 ccv3 并保留未知字段', () => {
+  assert.equal(crc32(Buffer.from('123456789')), 0xcbf43926);
+  assert.equal(parseCardJson(JSON.stringify(v1)).format, 'V1');
+  const json = pngCardJson(cardPng([{ key: 'chara', value: v2 }]))!;
+  const parsed = parseCardJson(json);
+  assert.equal(parsed.fields.description, v1.description);
+  assert.equal(parsed.loreEntries, 1); assert.deepEqual(parsed.raw, v2);
+  assert.ok(parsed.warnings.some(x => x.includes('插件')));
+  const v3 = { ...v2, spec: 'chara_card_v3', spec_version: '3.0', data: { ...v2.data, name: 'V3 优先', nickname: '昵称', group_only_greetings: [] } };
+  assert.equal(parseCardJson(pngCardJson(cardPng([{ key: 'chara', value: v2 }, { key: 'ccv3', value: v3 }]))!).fields.name, 'V3 优先');
+  assert.equal(pngCardJson(cardPng()), null);
+});
+
+test('拒绝损坏 PNG、重复块、错误字段及过深 JSON，不降级为空角色', () => {
+  const png = cardPng([{ key: 'chara', value: v2 }]); png[20] ^= 1;
+  assert.throws(() => pngCardJson(png), /校验/);
+  assert.throws(() => pngCardJson(cardPng().subarray(0, 25)), /长度|完整/);
+  assert.throws(() => pngCardJson(cardPng([{ key: 'chara', value: v2 }, { key: 'chara', value: v2 }])), /重复/);
+  assert.throws(() => parseCardJson(JSON.stringify({ ...v1, name: 10 })), /必须是文本/);
+  assert.throws(() => parseCardJson('{'), SyntaxError);
+  assert.throws(() => parseCardJson(JSON.stringify({ spec: 'unknown' })), /暂不支持/);
+  let nested: object = {}; for (let i = 0; i < 50; i++) nested = { child: nested };
+  assert.throws(() => parseCardJson(JSON.stringify({ ...v1, extensions: nested })), /复杂/);
+});
+
+test('图片卡与文字卡共同保存启用，原件/扩展保留、历史备份及小说隔离', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-characters-'));
+  t.after(async () => { assert.match(path.relative(os.tmpdir(), root), /^novel-characters-[^\\/]+$/); await fs.rm(root, { recursive: true, force: true }); });
+  const a = { id: randomUUID(), schemaVersion: 1 as const, name: '甲', root: path.join(root, '甲') };
+  const b = { ...a, id: randomUUID(), name: '乙', root: path.join(root, '乙') };
+  await Promise.all([fs.mkdir(a.root), fs.mkdir(b.root)]);
+  const project = (id: string) => { if (id === a.id) return a; if (id === b.id) return b; throw new Error('未知小说'); };
+  const store = new CharacterStore(project); const bytes = cardPng([{ key: 'chara', value: v2 }]);
+  const preview = store.prepare(a.id, '角色卡.png', bytes, cardPng());
+  assert.equal((await store.read(a.id)).value.cards.length, 0, '预览不能写入设定');
+  await assert.rejects(store.save(b.id, { fields: preview.fields, enabled: true, importToken: preview.token }, ''), /另一部小说/);
+  let snapshot = await store.save(a.id, { fields: preview.fields, enabled: true, importToken: preview.token }, '');
+  const first = snapshot.value.cards[0];
+  assert.deepEqual(await fs.readFile(path.join(a.root, '小说资料', 'character-originals', first.source.original)), bytes);
+  assert.deepEqual(first.raw, v2);
+  const oldHash = snapshot.hash;
+  snapshot = await store.save(a.id, { fields: { ...emptyCharacter(), name: '文字伙伴', description: '擅长航海' }, enabled: true }, snapshot.hash);
+  assert.equal(characterContext(a.id, snapshot.value.cards).length, 2);
+  assert.doesNotMatch(characterContext(a.id, snapshot.value.cards).map(x => x.text).join(''), /作者私有说明|卡片系统指令|测试世界书|初次见面/);
+  assert.throws(() => characterContext(b.id, snapshot.value.cards), /其他小说/);
+  await assert.rejects(store.save(a.id, { id: first.id, fields: first, enabled: false }, oldHash), /外部更新/);
+  await assert.rejects(store.save(b.id, { id: first.id, fields: first, enabled: true }, ''), /不存在/);
+  assert.equal((await store.read(b.id)).value.cards.length, 0);
+  snapshot = await store.save(a.id, { id: first.id, fields: { ...first, personality: '修改后的性格' }, enabled: true }, snapshot.hash);
+  assert.deepEqual(snapshot.value.cards[0].raw, v2);
+  assert.ok((await fs.readdir(path.join(a.root, '小说资料', 'character-history'))).length >= 2);
+  assert.equal((await new CharacterStore(project).read(a.id)).value.cards.length, 2);
+  const txt = store.prepare(a.id, '文字.txt', Buffer.from('文本角色描述'), null);
+  assert.equal(txt.fields.description, '文本角色描述'); store.release(a.id, txt.token);
+  await assert.rejects(store.save(a.id, { fields: txt.fields, enabled: false, importToken: txt.token }, snapshot.hash), /过期/);
+  const plain = store.prepare(a.id, '头像.png', cardPng(), cardPng());
+  assert.match(plain.warnings[0], /没有内嵌/); assert.equal(plain.fields.description, '');
+  const portrait = store.preparePortrait(a.id, cardPng());
+  snapshot = await store.save(a.id, { id: snapshot.value.cards[1].id, fields: snapshot.value.cards[1], enabled: true, portraitToken: portrait.token }, snapshot.hash);
+  assert.ok(snapshot.value.cards[1].portrait);
+  const file = path.join(a.root, '小说资料', 'characters.json');
+  const changed = { ...snapshot.value, schemaVersion: 9 }; await fs.writeFile(file, JSON.stringify(changed));
+  await assert.rejects(store.save(a.id, { fields: first, enabled: false }, snapshot.hash));
+  assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).schemaVersion, 9);
+});

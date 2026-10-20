@@ -1,0 +1,33 @@
+appId: com.novelwriter.desktop
+productName: 小说编写器
+copyright: 本地创作工具，数据只保存在本机与作者选择的同步目录
+directories:
+  # The workspace tree inherits a DENY(DC) ACE on Everyone, which makes Electron abort at startup
+  # with STATUS_BREAKPOINT (0x80000003). Build outputs therefore live outside the workspace.
+  output: '${env.LOCALAPPDATA}\NovelWriterBuild'
+electronDist: node_modules/electron/dist
+files:
+  - out/**/*
+  - package.json
+  - LICENSE
+  - THIRD_PARTY_NOTICES.md
+  - docs/licenses/ASTRBOT_AGPL-3.0.txt
+# The main-process bundle keeps runtime dependencies external (mammoth/docx/…), so production
+# node_modules must ship: excluding them made the packaged app die before any window appeared with
+# "Error: Cannot find module 'mammoth'".
+asar: true
+win:
+  # Keep electron-builder from editing/signing the PE: no certificate is available here and the
+  # edit step would make later ACL/asar comparisons ambiguous.
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: 小说编写器
+  deleteAppDataOnUninstall: false
