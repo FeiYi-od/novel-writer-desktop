@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -42,7 +43,7 @@ test('创作筹备 MD：按书提示词、草稿与正式大纲隔离，确认/�
 test('筹备实际 HTTP：冻结本书构想，草稿不注入，确认大纲进入审稿，旧设定结果拒绝采用', async t => {
   const f = await fixture(); const calls: any[] = [];
   const server = createServer(async (req, res) => { let raw = ''; for await (const part of req) raw += part; calls.push(JSON.parse(raw)); res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: outline }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`); });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(f.root, { recursive: true, force: true }); });
   const connections = new AIConnections(f.data, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const settings = await connections.save({ name: 'mock', model: 'mock', baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic', thinking: 'default', contextWindow: 32768, maxOutputTokens: 2048, tokenParameter: 'max_tokens', timeoutSeconds: 30 }, '');

@@ -49,8 +49,8 @@ async function main() {
     });
     assert.deepEqual(saved.states.map(item => [item.character, item.label, item.fromChapter, item.toChapter]), [['林夏', '受伤', 1, 1]]);
     await dialog.getByText(/当前是第 1 章，生效状态：林夏·受伤/u).waitFor();
-    const files = await fs.readdir(path.join(fixture, '创作资料'));
-    assert.ok(files.some(name => name.startsWith('人物状态-')), '状态应保存为本书资料');
+    const files = await fs.readdir(path.join(folder, '小说资料'));
+    assert.ok(files.some(name => name === '人物状态.json'), '状态应保存为本书资料');
     console.log('Character states desktop passed: state saved with chapter range and shown for the current chapter.');
   } finally { await app.evaluate(({ app: instance }) => { instance.exit(0); }).catch(() => {}); }
 }

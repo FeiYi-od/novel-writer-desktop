@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -55,7 +56,7 @@ async function fixture(t: TestContext) {
     if (behaviour === 'hold' || behaviour === 'timeout') res.write(sse(body.model === 'writer' ? text : '{"summary":', null));
     else res.end(sse(text) + 'data: [DONE]\n\n');
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   const connections = new AIConnections(local, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const base = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic' as const, thinking: 'default' as const, contextWindow: 32768, maxOutputTokens: 1024, tokenParameter: 'max_tokens' as const, timeoutSeconds: 30 };
   let settings = await connections.read();

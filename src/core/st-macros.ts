@@ -62,18 +62,45 @@ export function substituteMacros(text: string, env: MacroEnv = {}, random: () =>
   output = output.replace(/[ \t\r\n]*{{trim}}[ \t\r\n]*/gi, '');
   return output;
 }
-/** Applies SillyTavern regex scripts in order; `$1`-style backreferences work like JavaScript replace. */
-export function applyRegexScripts(text: string, scripts: RegexScript[]): string {
+/** Parse exported `/pattern/flags` values without adding flags that change script meaning.
+ * Bare patterns also accept our explicit `flags` field, for older local scripts. */
+function scriptExpression(script: RegexScript): RegExp | null {
+  const raw = script.findRegex;
+  if (!raw?.trim()) return null;
+  let pattern = raw, flags = script.flags ?? '';
+  if (raw.startsWith('/')) {
+    const closing = raw.lastIndexOf('/');
+    if (closing > 0) {
+      pattern = raw.slice(1, closing);
+      flags = raw.slice(closing + 1);
+    }
+  }
+  try { return new RegExp(pattern, flags); }
+  catch { return null; }
+}
+/** Matches the exported regex engine's capture filtering. `$&` is a local alias for `$0`;
+ * unknown macros remain visible. No plugin code or chat lifecycle hooks are executed. */
+export function applyRegexScripts(text: string, scripts: RegexScript[], env: MacroEnv = {}): string {
   let output = text;
   for (const script of scripts) {
     if (script.disabled) continue;
-    const pattern = script.findRegex?.trim();
-    if (!pattern) continue;
-    let expression: RegExp;
-    try { expression = new RegExp(pattern, script.flags ?? 'giu'); }
-    catch { continue; } // A broken script must not break the whole rewrite.
-    output = output.replace(expression, script.replaceString ?? '');
-    for (const trim of script.trimStrings ?? []) if (trim) output = output.split(trim).join('');
+    const expression = scriptExpression(script);
+    if (!expression) continue; // A broken script must not break the whole rewrite.
+    const trims = (script.trimStrings ?? []).map(trim => substituteMacros(trim, env)).filter(Boolean);
+    const template = (script.replaceString ?? '').replace(/{{match}}/gi, '$0');
+    output = output.replace(expression, (...args: unknown[]) => {
+      const last = args[args.length - 1];
+      const named = last && typeof last === 'object' ? last as Record<string, unknown> : undefined;
+      // The tail also contains match offset and input, neither is a capture group.
+      const captures = args.slice(0, args.length - (named ? 3 : 2));
+      const replacement = template.replace(/\$(\d+)|\$<([^>]+)>|\$&/gu, (token, number: string | undefined, name: string | undefined) => {
+        const value = token === '$&' ? captures[0] : number !== undefined ? captures[Number(number)] : named?.[name!];
+        let filtered = typeof value === 'string' ? value : '';
+        for (const trim of trims) filtered = filtered.split(trim).join('');
+        return filtered;
+      });
+      return substituteMacros(replacement, env);
+    });
   }
   return output;
 }

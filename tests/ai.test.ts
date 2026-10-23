@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -38,7 +39,7 @@ async function mockServer() {
     for (let i = 0; i < data.length; i += 7) { res.write(data.subarray(i, i + 7)); await new Promise(resolve => setTimeout(resolve, 1)); }
     res.end();
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   const port = (server.address() as { port: number }).port;
   return { calls, url: `http://127.0.0.1:${port}/v1`, close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }

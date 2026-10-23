@@ -16,6 +16,9 @@ files:
 # node_modules must ship: excluding them made the packaged app die before any window appeared with
 # "Error: Cannot find module 'mammoth'".
 asar: true
+extraResources:
+  - from: scripts/protect-upgrade-materials.ps1
+    to: protect-upgrade-materials.ps1
 win:
   # Keep electron-builder from editing/signing the PE: no certificate is available here and the
   # edit step would make later ACL/asar comparisons ambiguous.
@@ -25,8 +28,10 @@ win:
       arch: [x64]
   artifactName: ${productName}-${version}-${arch}.${ext}
 nsis:
+  include: scripts/installer-materials.nsh
   oneClick: false
   perMachine: false
+  allowElevation: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   shortcutName: 小说编写器

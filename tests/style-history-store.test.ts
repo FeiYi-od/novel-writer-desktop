@@ -37,6 +37,6 @@ test('文风版本存储：并发修改被拒绝，覆盖前留历史文件', as
   const created = await f.store.ensure(f.project.id, '', 's1', '规则甲。');
   await assert.rejects(f.store.revise(f.project.id, 'deadbeef', 's1', '规则乙。'), /已被其他窗口修改/u);
   await f.store.revise(f.project.id, created.hash, 's1', '规则乙。');
-  const history = await fs.readdir(path.join(f.root, '创作资料', '文风版本历史')).catch(() => [] as string[]);
+  const history = await fs.readdir(path.join(f.project.root, '小说资料', '文风版本历史')).catch(() => [] as string[]);
   assert.ok(history.length >= 1, '覆盖保存应留下历史版本');
 });

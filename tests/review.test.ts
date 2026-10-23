@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -46,7 +47,7 @@ async function fixture() {
     if (body.model.startsWith('writer')) { writerResponse = res; res.write(sse(output, null)); }
     else if (holdReview) { reviewerResponse = res; res.write(sse('{"summary":', null)); }
     else res.end(sse(invalidReview ? 'not-json' : report([item('推开们', '推开门')])) + 'data: [DONE]\n\n');
-  }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  }); await listenLocalHttp(server);
   const connections = new AIConnections(local, { encrypt: text => Buffer.from(text.split('').reverse().join('')), decrypt: bytes => bytes.toString().split('').reverse().join('') });
   const base = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic' as const, thinking: 'default' as const, contextWindow: 32768, maxOutputTokens: 2048, tokenParameter: 'max_tokens' as const, timeoutSeconds: 30 };
   let settings = await connections.save({ ...base, name: '写作', model: 'writer', apiKey: 'writer-test-key' }, '');

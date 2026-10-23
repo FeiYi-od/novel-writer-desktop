@@ -41,8 +41,8 @@ async function main() {
     assert.equal(state.relations.length, 1);
     assert.deepEqual(state.groups.map(group => group.name), ['阿岚', '林夏'], '关系两端都应出现');
     assert.ok(state.groups.every(group => group.items[0].relation.label === '师徒'));
-    const files = await fs.readdir(path.join(fixture, '创作资料'));
-    assert.ok(files.some(name => name.startsWith('人物关系-')), '关系应保存为本书资料');
+    const files = await fs.readdir(path.join(folder, '小说资料'));
+    assert.ok(files.some(name => name === '人物关系.json'), '关系应保存为本书资料');
     console.log('Relations desktop passed: relation saved and visible from both characters.');
   } finally { await app.evaluate(({ app: instance }) => { instance.exit(0); }).catch(() => {}); }
 }

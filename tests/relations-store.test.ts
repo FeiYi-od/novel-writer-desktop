@@ -38,6 +38,6 @@ test('人物关系存储：并发修改与重复关系都被拒绝，成功覆�
   await assert.rejects(f.store.save(f.project.id, [rel('林夏', '阿岚', '师徒'), rel('阿岚', '林夏', '师徒')], first.hash), /重复/u);
   const second = await f.store.save(f.project.id, [rel('林夏', '阿岚', '师徒'), rel('林夏', '沈舟', '旧识')], first.hash);
   assert.equal(second.relations.length, 2);
-  const history = await fs.readdir(path.join(f.root, '创作资料', '人物关系历史')).catch(() => [] as string[]);
+  const history = await fs.readdir(path.join(f.project.root, '小说资料', '人物关系历史')).catch(() => [] as string[]);
   assert.ok(history.length >= 1, '覆盖保存应留下历史版本');
 });

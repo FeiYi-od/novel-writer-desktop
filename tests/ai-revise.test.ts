@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -40,7 +41,7 @@ async function fixture(t: TestContext) {
     // Reviewer models only return a report; the quote differs so tests can pick the located or ambiguous one.
     res.end(sse(report(body.model === 'reviewer-dup' ? '雨停了。' : '推开们', body.model === 'reviewer-dup' ? '雨停了。' : '推开门')));
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); });
   const connections = new AIConnections(local, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const base = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic' as const, thinking: 'default' as const, contextWindow: 32768, maxOutputTokens: 2048, tokenParameter: 'max_tokens' as const, timeoutSeconds: 30 };

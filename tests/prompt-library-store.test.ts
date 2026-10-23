@@ -40,6 +40,6 @@ test('提示词库：并发修改与重名被拒绝，覆盖保存留历史', as
   await assert.rejects(f.store.save(f.project.id, [tpl('续写', 'y')], 'deadbeef'), /已被其他窗口修改/u);
   await assert.rejects(f.store.save(f.project.id, [tpl('续写', 'x'), tpl(' 续写 ', 'y')], first.hash), /重复/u);
   await f.store.save(f.project.id, [tpl('续写', '新的')], first.hash);
-  const history = await fs.readdir(path.join(f.root, '创作资料', '提示词库历史')).catch(() => [] as string[]);
+  const history = await fs.readdir(path.join(f.project.root, '小说资料', '提示词库历史')).catch(() => [] as string[]);
   assert.ok(history.length >= 1);
 });

@@ -48,6 +48,6 @@ test('时间线：保存后读回排序结果，哈希变化可检出并发修�
   // A successful second save keeps the previous version in history.
   const second = await f.store.save(f.project.id, [entry('第3天', '三'), entry('第2天', '二')], reloaded.hash);
   assert.deepEqual(second.entries.map(item => item.title), ['二', '三']);
-  const history = await fs.readdir(path.join(f.root, '创作资料', '时间线历史')).catch(() => [] as string[]);
+  const history = await fs.readdir(path.join(f.project.root, '小说资料', '时间线历史')).catch(() => [] as string[]);
   assert.ok(history.length >= 1, '覆盖保存时应留下历史版本');
 });

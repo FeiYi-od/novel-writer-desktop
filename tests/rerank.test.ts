@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -25,7 +26,7 @@ function request(): Request {
   return { projectId, query: RERANK_PROBE_QUERY, topK: 2, candidates: RERANK_PROBE_TEXTS.map((text, index) => ({ chunk: { id: `fictional-${index}`, projectId, corpus: 'canon', sourcePath: `虚构资料/${index}.md`, sourceHash: String(index).repeat(64), startParagraph: index, endParagraph: index, text, confirmed: true }, score: 0.1 * index, embeddingFingerprint: 'a'.repeat(64) })) };
 }
 async function mock(t: TestContext, handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>) {
-  const server = createServer(handler); await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const server = createServer(handler); await listenLocalHttp(server);
   t.after(() => new Promise<void>(r => { server.closeAllConnections(); server.close(() => r()); }));
   return `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 }

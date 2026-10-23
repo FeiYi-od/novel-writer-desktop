@@ -33,8 +33,8 @@ async function main() {
       return (await window.writer.readTimeline(id)).entries.map(entry => `${entry.when}|${entry.title}`);
     });
     assert.deepEqual(entries, ['第2天|离开村庄', '第10天|抵达北门'], '时间线应按数值顺序保存');
-    const file = await fs.readdir(path.join(fixture, '创作资料'));
-    assert.ok(file.some(name => name.startsWith('时间线-')), '时间线应保存为本书资料');
+    const file = await fs.readdir(path.join(folder, '小说资料'));
+    assert.ok(file.some(name => name === '时间线.json'), '时间线应保存为本书资料');
     console.log('Timeline desktop passed: entries saved in numeric order as project material.');
   } finally { await app.evaluate(({ app: instance }) => { instance.exit(0); }).catch(() => {}); }
 }

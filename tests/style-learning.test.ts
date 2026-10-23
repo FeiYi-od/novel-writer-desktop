@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -31,7 +32,7 @@ test('模型文风 HTTP：仅参考样本、确认前不入库、确认后 MD、
   const notes = await workspace.readNotes(a.id); await workspace.saveNotes(a.id, { ...notes.value, world: '本书秘密规则，不发给分析模型' }, notes.hash);
   const calls: any[] = []; const server = createServer(async (req, res) => { let raw = ''; for await (const part of req) raw += part; const body = JSON.parse(raw); calls.push(body);
     res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: body.model === 'invalid' ? 'invalid' : body.model === 'analysis' ? learned : '原创正文' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
-  }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  }); await listenLocalHttp(server);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await fs.rm(root, { recursive: true, force: true }); });
   const connections = new AIConnections(local, { encrypt: s => Buffer.from(s), decrypt: b => b.toString() });
   const common = { name: '测试', baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic' as const, thinking: 'default' as const, timeoutSeconds: 30, contextWindow: 32768, maxOutputTokens: 2048, tokenParameter: 'max_tokens' as const };

@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -54,7 +55,7 @@ async function fixture(t: TestContext) {
     let raw = ''; for await (const part of req) raw += part;
     const body = JSON.parse(raw); calls.push(body); res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.end(sse(body.model === 'writer' ? '候选林夏推开们。' : report));
-  }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  }); await listenLocalHttp(server);
   const connections = new AIConnections(local, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const base = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic' as const, thinking: 'default' as const, contextWindow: 32768,
     maxOutputTokens: 1024, tokenParameter: 'max_tokens' as const, timeoutSeconds: 30 };

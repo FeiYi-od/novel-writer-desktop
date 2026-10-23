@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { once } from 'node:events';
+import { listenLocalHttp } from './support/local-http';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { AIService } from '../src/main/ai-service';
@@ -32,7 +32,7 @@ async function fixture(t: TestContext) {
   let calls = 0;
   const server = createServer(async (req, res) => { for await (const _ of req) {} calls++; res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: report }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`); });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   const connections = new AIConnections(local, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const settings = await connections.save({ baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, name: '虚构审稿', model: 'fictional', apiKey: 'fictional-key',
     adapter: 'generic', thinking: 'default', contextWindow: 32768, maxOutputTokens: 1024, tokenParameter: 'max_tokens', timeoutSeconds: 30 }, '');

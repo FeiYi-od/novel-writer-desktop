@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -13,7 +14,7 @@ import { astrbotTemplates, chatPresets } from '../src/shared/model-presets';
 import { ExitSaveRegistry } from '../src/renderer/src/save-before-exit';
 import type { AIConnection } from '../src/shared/contracts';
 
-async function server(t: TestContext, handle: (req: IncomingMessage, res: ServerResponse) => void) { const server = createServer(handle); await new Promise<void>(r => server.listen(0, '127.0.0.1', r)); t.after(() => new Promise<void>(r => { server.closeAllConnections(); server.close(() => r()); })); return `http://127.0.0.1:${(server.address() as any).port}`; }
+async function server(t: TestContext, handle: (req: IncomingMessage, res: ServerResponse) => void) { const server = createServer(handle); await listenLocalHttp(server); t.after(() => new Promise<void>(r => { server.closeAllConnections(); server.close(() => r()); })); return `http://127.0.0.1:${(server.address() as any).port}`; }
 async function fixture(t: TestContext) { const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-providers-test-')); t.after(async () => { assert.match(path.relative(os.tmpdir(), dir), /^novel-providers-test-[^\\/]+$/); await fs.rm(dir, { recursive: true, force: true }); }); return dir; }
 const codec = { encrypt: (s: string) => Buffer.from('encoded:' + s), decrypt: (b: Buffer) => b.toString().slice(8) };
 const profile = (baseUrl: string, adapter: AIConnection['adapter']): AIConnection => ({ id: randomUUID(), name: '模拟连接', model: 'test-model', baseUrl, adapter, thinking: 'default', hasKey: true, timeoutSeconds: 60, contextWindow: 32768, maxOutputTokens: 1000, tokenParameter: 'max_tokens' });

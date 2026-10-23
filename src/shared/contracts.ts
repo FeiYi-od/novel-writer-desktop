@@ -1,3 +1,5 @@
+import type { MaterialSyncRequest, MaterialSyncSnapshot } from './material-sync';
+
 export interface RichNode {
   type: string;
   attrs?: Record<string, unknown>;
@@ -57,6 +59,9 @@ export interface AIModelList { connectionId?: string; baseUrl: string; checkedAt
 export interface DiscussionMessageView { id: string; role: 'user' | 'assistant' | 'system'; content: string; at: string; compressedInto?: string }
 
 export interface WriterApi {
+  materialSyncStatus(projectId: string, remoteRevision?: string): Promise<MaterialSyncSnapshot>;
+  configureMaterialSync(projectId: string, enabled: boolean): Promise<MaterialSyncSnapshot>;
+  synchronizeMaterials(request: MaterialSyncRequest): Promise<MaterialSyncSnapshot>;
   chapterConfirmations(projectId: string): Promise<ChapterConfirmationSnapshot>;
   previewChapterConfirmation(projectId: string, path: string): Promise<ChapterConfirmationPreview>;
   confirmChapterVersion(request: ConfirmChapterVersionRequest): Promise<ChapterConfirmationSnapshot>;

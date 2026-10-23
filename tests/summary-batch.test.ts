@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -30,7 +31,7 @@ async function fixture(t: TestContext) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: `摘要：${source.slice(0, 12)}` }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); });
   const connections = new AIConnections(local, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const saved = await connections.save({ name: '摘要模型', baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, model: 'mock-summary', adapter: 'generic', thinking: 'default', contextWindow: 32768, maxOutputTokens: 2048, tokenParameter: 'max_tokens', timeoutSeconds: 30, apiKey: 'fictional-summary-key' }, '');

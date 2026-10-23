@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -58,7 +59,7 @@ async function fixture(t: TestContext) {
       else res.end(sse('林夏推开们。') + 'data: [DONE]\n\n');
     } else res.end(sse(JSON.stringify({ summary: '依据已确认的月钥原文核对', issues: [{ category: '错别字', quote: '推开们', replacement: '推开门', reason: '门字误写', evidence: '' }] })) + 'data: [DONE]\n\n');
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   const connections = new AIConnections(local, { encrypt: value => Buffer.from(value), decrypt: bytes => bytes.toString() });
   const base = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic' as const, thinking: 'default' as const,
     contextWindow: 32768, maxOutputTokens: 1024, tokenParameter: 'max_tokens' as const, timeoutSeconds: 30 };

@@ -33,7 +33,7 @@ async function main() {
     await dialog.getByText('套用正则后', { exact: true }).waitFor();
     const panes = await dialog.locator('.macro-result pre').allTextContents();
     assert.equal(panes[0], '林夏说(小声)：作者看见你了~~', `宏展开结果不符：${panes[0]}`);
-    assert.equal(panes[1], '林夏说（小声）：作者看见你了', `正则应用结果不符：${panes[1]}`);
+    assert.equal(panes[1], '林夏说（小声）：作者看见你了~~', `正则应用结果不符（未匹配原文不可被trimStrings清除）：${panes[1]}`);
     console.log('Macro desktop passed: macros expanded and regex scripts applied in order.');
   } finally { await app.evaluate(({ app: instance }) => { instance.exit(0); }).catch(() => {}); }
 }

@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -118,7 +119,7 @@ test('A06 手动批量审稿取消后不再请求下一个模型', async t => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: '{"summary":"独立报告","issues":[]}' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   t.after(async () => { gate.release?.(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); });
   const connections = new AIConnections(local, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const base = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, adapter: 'generic' as const, thinking: 'default' as const, contextWindow: 32768, maxOutputTokens: 2048, tokenParameter: 'max_tokens' as const, timeoutSeconds: 30 };

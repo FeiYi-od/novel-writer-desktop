@@ -36,7 +36,7 @@ if (root.endsWith('.asar')) {
       if (entry.isSymbolicLink()) throw new Error('Release input must not contain symbolic links');
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(file);
-      else if (/\.(?:ts|tsx|js|html|css|json)$/u.test(entry.name)) inspect(path.relative(root, file), await fs.readFile(file));
+      else if (/\.(?:ts|tsx|js|html|css|json|ps1|nsh|md|txt|ya?ml)$/u.test(entry.name)) inspect(path.relative(root, file), await fs.readFile(file));
     }
   }
   await visit(root);

@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -31,7 +32,7 @@ test('故事记忆 Markdown：确认、跨书与冲突保护、同章替代、�
 });
 test('独立摘要 HTTP：确认前不注入，确认后进入本书请求，原文改动失效且不改稿', async t => {
   const f = await setup(); const calls: any[] = []; const summary = '林夏找到车票，但列车尚未到站。';
-  const server = createServer(async (req, res) => { let raw = ''; for await (const part of req) raw += part; const body = JSON.parse(raw); calls.push(body); res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: body.model === 'summary' ? summary : '正文候选' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`); }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const server = createServer(async (req, res) => { let raw = ''; for await (const part of req) raw += part; const body = JSON.parse(raw); calls.push(body); res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: body.model === 'summary' ? summary : '正文候选' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`); }); await listenLocalHttp(server);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await fs.rm(f.root, { recursive: true, force: true }); });
   const connections = new AIConnections(f.local, { encrypt: text => Buffer.from(text), decrypt: bytes => bytes.toString() });
   const common = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, name: '测试', adapter: 'generic' as const, thinking: 'default' as const, timeoutSeconds: 30, contextWindow: 32768, maxOutputTokens: 2048, tokenParameter: 'max_tokens' as const };

@@ -6,6 +6,9 @@ import mammoth from 'mammoth';
 import { LibraryStore } from './library';
 import { CharacterStore } from './characters';
 import { Workspace } from './workspace';
+import { MaterialSyncService } from './material-sync';
+import { OperationGate } from './operation-gate';
+import { protectLegacyMaterials } from './material-upgrade';
 import { ChapterOrderStore } from './chapter-order';
 import { BookReplace } from './book-replace';
 import { analyzeDocx } from './docx-capabilities';
@@ -81,8 +84,16 @@ let window: BrowserWindow | null = null;
 async function bootstrap() {
   // Upgrade steps run before any store opens; each recorded step runs at most once.
   await runMigrations(app.getPath('userData'));
-  const materialsRoot = process.env.NOVEL_WRITER_TEST_DATA ? path.join(app.getPath('userData'), '创作资料') : path.join(app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, '../..'), '创作资料');
+  // Keep author data outside the installation tree, which NSIS replaces on upgrade.
+  const materialsRoot = path.join(app.getPath('userData'), '创作资料');
+  if (!process.env.NOVEL_WRITER_TEST_DATA) {
+    const sourceInstall = app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, '../..');
+    const script = app.isPackaged ? path.join(process.resourcesPath, 'protect-upgrade-materials.ps1') : path.join(sourceInstall, 'scripts/protect-upgrade-materials.ps1');
+    await protectLegacyMaterials(sourceInstall, app.getPath('userData'), script, app.isPackaged ? process.pid : 0);
+  }
   const workspace = new Workspace(app.getPath('userData'), materialsRoot);
+  const materialSync = new MaterialSyncService(workspace, materialsRoot, app.getPath('userData'));
+  const materialGate = new OperationGate();
   const docxCopies = new DocxCopyService(workspace);
   await workspace.initialize();
   const chapterOrder = new ChapterOrderStore(workspace);
@@ -178,6 +189,13 @@ async function bootstrap() {
     const scale = Math.min(1, 720 / Math.max(width, height));
     return image.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }).toPNG();
   };
+  const migrateBookRecords = async (id: string) => {
+    // Include legacy name-based records in full-book exports even if their
+    // individual panels have not been opened since this upgrade.
+    const results = await Promise.allSettled([timeline.read(id), relations.read(id), characterStates.read(id), prompts.read(id), blueprints.read(id), styleHistory.read(id)]);
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+  };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     'confirmation:read': projectId => confirmations.read(projectId),
     'confirmation:preview': (projectId, relative) => confirmations.preview(projectId, relative),
@@ -219,12 +237,12 @@ async function bootstrap() {
     'models:cancel-rerank-test': id => reranks.cancel(id),
     'models:save-auxiliary': (edit, hash) => auxiliaryModels.save(edit, hash),
     'app:begin-save-exit': () => {
-      if (exitToken || activeRequests || ai.hasPendingWork()) throw new Error('模型任务或文件操作尚未完成，请等待或停止任务后再保存退出');
+      if (exitToken || activeRequests || materialGate.exclusivePending || ai.hasPendingWork()) throw new Error('模型任务或文件操作尚未完成，请等待或停止任务后再保存退出');
       exitToken = randomUUID(); return exitToken;
     },
     'app:cancel-save-exit': token => { if (token !== exitToken) throw new Error('无效退出会话'); exitToken = null; },
     'app:finish-save-exit': token => {
-      if (!exitToken || token !== exitToken || activeRequests || ai.hasPendingWork()) throw new Error('退出会话无效或仍有处理中的任务，窗口保留');
+      if (!exitToken || token !== exitToken || activeRequests || materialGate.exclusivePending || ai.hasPendingWork()) throw new Error('退出会话无效或仍有处理中的任务，窗口保留');
       // Only an explicit renderer save transaction may bypass the unsaved prompt.
       finishingExit = true; setTimeout(() => window?.destroy(), 50);
     },
@@ -272,6 +290,9 @@ async function bootstrap() {
     'detector:usage': (id: string) => detector.usage(id),
     'detector:quota': request => detector.configureUsage(request),
     'detector:test': (id: string) => detector.testConnection(id),
+    'materials-sync:status': (id: string, revision?: string) => materialSync.status(id, revision),
+    'materials-sync:configure': (id: string, enabled: boolean) => materialSync.configure(id, enabled),
+    'materials-sync:synchronize': request => materialSync.synchronize(request),
     'materials:location': (id: string) => { workspace.getProject(id); return materialDirectory(materialsRoot, id); },
     'materials:generate': request => ai.startMaterial(request),
     'materials:import': async (id: string) => {
@@ -473,6 +494,7 @@ async function bootstrap() {
       });
       if (picked.canceled || !picked.filePath) return null;
       const target = picked.filePath.toLowerCase().endsWith('.zip') ? picked.filePath : `${picked.filePath}.zip`;
+      await migrateBookRecords(id);
       return exportBookZip(workspace, id, target);
     },
     'book:progress': (id: string) => collectChapterStats(workspace, id),
@@ -503,6 +525,7 @@ async function bootstrap() {
     'nas:backup': async (id: string) => {
       const picked = await dialog.showOpenDialog(window!, { title: '选择备份目标文件夹（NAS 映射盘目录即可）', properties: ['openDirectory', 'createDirectory'] });
       if (picked.canceled || !picked.filePaths[0]) return null;
+      await migrateBookRecords(id);
       const result = await backupBook(workspace, id, picked.filePaths[0]);
       const verify = await verifyBackup(result.folder);
       return { folder: result.folder, files: result.files, bytes: result.bytes, verified: verify.ok, checked: verify.checked };
@@ -573,7 +596,19 @@ async function bootstrap() {
       const readOnly = /^(models:auxiliary|ai:(connections|tasks)|detector:(connections|reports|usage|batch-state)|memory:batch-state|knowledge:index-status|drafts:read|projects:list|chapters:(list|read|order|conflicts)|notes:read|book:read|characters:read|planning:read|memory:read|materials:location|recovery:(list|read))$/.test(channel);
       const tracked = !channel.startsWith('app:') && !readOnly;
       if (tracked) activeRequests++;
-      try { return await handler(...args); } finally { if (tracked) activeRequests--; }
+      try {
+        if (channel.startsWith('app:')) return await handler(...args);
+        if (channel.startsWith('materials-sync:')) {
+          // All pre-existing IPC, including reads that create missing Markdown files,
+          // must finish before exchanging the canonical directory. Status may
+          // recover an interrupted swap too, so it uses the same exclusive gate.
+          return await materialGate.exclusive(() => {
+            if (ai.hasPendingWork()) throw new Error('模型任务仍在运行，请等待或停止后再同步固定资料');
+            return handler(...args);
+          });
+        }
+        return await materialGate.shared(() => handler(...args));
+      } finally { if (tracked) activeRequests--; }
     });
   }
   window = new BrowserWindow({

@@ -50,6 +50,6 @@ test('蓝图存储：并发修改与重复蓝图被拒绝，覆盖保存留历�
   await assert.rejects(f.store.save(f.project.id, [node('chapter', f.chapter.path, { goals: '改' })], 'deadbeef'), /已被其他窗口修改/u);
   await assert.rejects(f.store.save(f.project.id, [node('chapter', f.chapter.path), node('chapter', f.chapter.path, { goals: '二' })], first.hash), /只能有一份/u);
   await f.store.save(f.project.id, [node('chapter', f.chapter.path, { goals: '新目标' })], first.hash);
-  const history = await fs.readdir(path.join(f.root, '创作资料', '蓝图历史')).catch(() => [] as string[]);
+  const history = await fs.readdir(path.join(f.project.root, '小说资料', '蓝图历史')).catch(() => [] as string[]);
   assert.ok(history.length >= 1);
 });

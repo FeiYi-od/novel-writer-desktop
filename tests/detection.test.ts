@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -20,7 +21,7 @@ test('腾讯朱雀：官方请求结构、占比和置信度区分、真实版�
     if (body.text === 'malformed') { res.end('{"status":"success"}'); return; }
     res.end(JSON.stringify({ status: 'success', labels_ratio: { '0': 0.6, '1': 0.25, '2': 0.15 }, softmax_confidence: 0.91, segment_labels: [{ text: body.text, label: 2, conf: 0.7 }] }));
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const workspace = new Workspace(path.join(root, 'local')); await workspace.initialize(); await fs.mkdir(path.join(root, 'A')); await fs.mkdir(path.join(root, 'B'));

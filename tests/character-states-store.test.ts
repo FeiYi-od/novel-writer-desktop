@@ -35,6 +35,6 @@ test('人物状态存储：覆盖保存留下历史版本', async t => {
   const f = await fixture(t);
   const first = await f.store.save(f.project.id, [state('林夏', '受伤')], '');
   await f.store.save(f.project.id, [state('林夏', '康复')], first.hash);
-  const history = await fs.readdir(path.join(f.root, '创作资料', '人物状态历史')).catch(() => [] as string[]);
+  const history = await fs.readdir(path.join(f.project.root, '小说资料', '人物状态历史')).catch(() => [] as string[]);
   assert.ok(history.length >= 1);
 });

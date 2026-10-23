@@ -1,3 +1,4 @@
+import { listenLocalHttp } from './support/local-http';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -9,7 +10,7 @@ async function mock(t: TestContext, reply: (text: string, response: import('node
   const calls: { url?: string; key?: string; text: string; is_merge: unknown }[] = [];
   const server = createServer(async (req, res) => { let raw = ''; for await (const part of req) raw += part; const body = JSON.parse(raw);
     calls.push({ url: req.url, key: req.headers.authorization, text: body.text, is_merge: body.is_merge }); reply(body.text, res); });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  await listenLocalHttp(server);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
   return { url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, calls };
 }
