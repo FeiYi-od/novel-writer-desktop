@@ -221,3 +221,35 @@ test('ZIP archive size limit refuses large snapshots before creating destination
   await assert.rejects(f.service.archiveHistory({ ...select(old), fingerprint: preview.fingerprint }), /64 MiB/);
   await assert.rejects(fs.access(path.join(f.book, '小说资料/资料历史归档')));
 });
+
+test('history publication rechecks its target after the final source verification', async t => {
+  for (const kind of ['copy', 'zip'] as const) await t.test(kind, async () => {
+    const f = await fixture(), old = await f.archive({ '旧稿.txt': '历史原稿' });
+    await f.put(f.canonical, '当前.txt', '当前资料保留');
+    const preview = await f.service.previewHistory(select(old));
+    const outputRoot = path.join(f.book, '小说资料', kind === 'copy' ? '资料历史恢复' : '资料历史归档');
+    const internal = f.service as any, verify = internal.assertHistoryUnchanged.bind(internal);
+    let count = 0, injected = false, output = '';
+    internal.assertHistoryUnchanged = async (context: unknown) => {
+      await verify(context);
+      if (++count !== (kind === 'copy' ? 2 : 3)) return;
+      const names = await fs.readdir(outputRoot); assert.equal(names.length, 1);
+      output = path.join(outputRoot, names[0]); injected = true;
+      if (kind === 'copy') await fs.writeFile(path.join(output, 'files/旧稿.txt'), '末次来源复核期间的外部修改');
+      else await fs.appendFile(path.join(output, '历史资料.zip'), '末次来源复核期间的外部修改');
+    };
+    let rejected = false;
+    try {
+      const request = { ...select(old), fingerprint: preview.fingerprint };
+      if (kind === 'copy') await f.service.copyHistory(request);
+      else await f.service.archiveHistory(request);
+    } catch (error) { rejected = true; assert.match(String(error), /变化/); }
+    assert.equal(injected, true, 'The mutation must occur after the final source verification');
+    assert.equal(await fs.readFile(path.join(old.folder, '旧稿.txt'), 'utf8'), '历史原稿');
+    assert.equal(await fs.readFile(path.join(f.canonical, '当前.txt'), 'utf8'), '当前资料保留');
+    assert.equal(rejected, true, `${kind} must reject a target modified during its final source verification`);
+    await assert.rejects(fs.access(path.join(output, kind === 'copy' ? 'manifest.json' : '完成清单.json')));
+    if (kind === 'copy') assert.equal(await fs.readFile(path.join(output, 'files/旧稿.txt'), 'utf8'), '末次来源复核期间的外部修改');
+    else assert.ok((await fs.readFile(path.join(output, '历史资料.zip'), 'utf8')).endsWith('末次来源复核期间的外部修改'));
+  });
+});

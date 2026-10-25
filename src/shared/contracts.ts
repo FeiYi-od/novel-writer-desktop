@@ -1,4 +1,4 @@
-import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult } from './material-sync';
+import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult, MaterialHistoryImportRequest, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportResult } from './material-sync';
 import type { DocxStructureSnapshot, DocxStructureAction, DocxStructureEditResult } from './docx-structure';
 
 export interface RichNode {
@@ -67,6 +67,9 @@ export interface WriterApi {
   previewMaterialHistory(request: MaterialHistoryRequest): Promise<MaterialHistoryPreview>;
   copyMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryCopyResult>;
   archiveMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryArchiveResult>;
+  openMaterialHistoryArchive(projectId: string): Promise<MaterialHistoryImportPreview | null>;
+  previewMaterialHistoryArchive(request: MaterialHistoryImportRequest): Promise<MaterialHistoryImportPreview>;
+  importMaterialHistoryArchive(request: MaterialHistoryImportCopyRequest): Promise<MaterialHistoryImportResult>;
   readDocxStructure(projectId: string, chapterPath: string, expectedHash: string): Promise<DocxStructureSnapshot>;
   editDocxStructureBatch(projectId: string, chapterPath: string, actions: DocxStructureAction[], expectedHash: string): Promise<DocxStructureEditResult>;
   chapterConfirmations(projectId: string): Promise<ChapterConfirmationSnapshot>;

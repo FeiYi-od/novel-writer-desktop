@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MaterialHistoryArchiveResult, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryPreview, MaterialHistorySnapshot, MaterialHistoryVersion } from '../../shared/material-sync';
+import { MaterialHistoryImportPanel } from './MaterialHistoryImportPanel';
 import './material-history.css';
 
 interface MaterialHistoryPanelProps {
@@ -44,6 +45,8 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
   const mounted = useRef(false); const currentProject = useRef(projectId); currentProject.current = projectId;
   const request = useRef(0); const running = useRef(false);
   const panelRef = useRef<HTMLElement>(null);
@@ -54,14 +57,14 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
       throw new Error('历史结果的小说或版本标识不匹配，未在本页应用');
   };
   const operate = async (action: (id: string, ticket: number) => Promise<void>) => {
-    if (running.current) return;
+    if (running.current || importOpen) return;
     const id = projectId; const ticket = ++request.current;
     running.current = true; setBusy(true); setError(''); setNotice('');
     try { await action(id, ticket); }
     catch (e) { if (valid(id, ticket)) setError(errorText(e)); }
     finally { if (valid(id, ticket)) { running.current = false; setBusy(false); } }
   };
-  useEffect(() => { onBusy(busy); return () => { onBusy(false); }; }, [busy, onBusy]);
+  useEffect(() => { onBusy(busy || importBusy); return () => { onBusy(false); }; }, [busy, importBusy, onBusy]);
   useEffect(() => {
     const previous = document.activeElement;
     panelRef.current?.focus();
@@ -145,9 +148,9 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
     void operate(async (id, ticket) => { await window.writer.copyText(file); if (valid(id, ticket)) setNotice('历史ZIP路径已复制'); });
   };
   const selectedFile = preview?.files.find(file => file.path === path);
-  const close = () => { if (!running.current) onClose(); };
+  const close = () => { if (!running.current && !importOpen) onClose(); };
 
-  return <div className="modal-overlay material-history-overlay"><section ref={panelRef} tabIndex={-1} className="book-modal material-history-panel" role="dialog" aria-modal="true" aria-labelledby="material-history-title" data-testid="history-panel" aria-busy={busy} onKeyDown={event => {
+  return <><div className="modal-overlay material-history-overlay" inert={importOpen} aria-hidden={importOpen || undefined}><section ref={panelRef} tabIndex={-1} className="book-modal material-history-panel" role="dialog" aria-modal="true" aria-labelledby="material-history-title" data-testid="history-panel" aria-busy={busy} onKeyDown={event => {
     if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); close(); }
     if (event.key === 'Tab') {
       const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
@@ -163,7 +166,7 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
     {notice && <p role="status" className="material-history-notice">{notice}</p>}
     {result && <section className="material-history-result" data-testid="history-result" role="status"><strong>已恢复为新副本</strong><p>{result.files} 个文件 · {size(result.bytes)}</p><code>{result.directory}</code><button type="button" data-testid="history-copy-directory" disabled={busy} onClick={copyDirectory}>复制新副本目录</button><p>当前设定未变。请核对副本内容，再决定是否手动采纳。</p></section>}
     {archiveResult && <section className="material-history-result" data-testid="history-archive-result" role="status"><strong>历史ZIP已完成</strong><p>{archiveResult.files} 个文件 · 原始 {size(archiveResult.bytes)} · ZIP {size(archiveResult.archiveBytes)}</p><code>{archiveResult.file}</code><code>SHA-256 {archiveResult.sha256}</code><button type="button" data-testid="history-archive-path" disabled={busy} onClick={copyArchivePath}>复制历史ZIP路径</button><p>ZIP与完成清单位于本书“小说资料/资料历史归档”。旧历史继续保留；本次归档不会删除父版本或解除历史数量上限。</p></section>}</div>
-    <div className="material-history-toolbar"><span>{busy ? '正在读取 / 核对…' : snapshot ? `共 ${snapshot.versions.length} 个历史版本` : '尚未读取'}</span><button type="button" data-testid="history-refresh" disabled={busy} onClick={refresh}>刷新历史列表</button></div>
+    <div className="material-history-toolbar"><span>{busy ? '正在读取 / 核对…' : snapshot ? `共 ${snapshot.versions.length} 个历史版本` : '尚未读取'}</span><div className="actions"><button type="button" data-testid="history-import-open" disabled={busy || importOpen} onClick={() => setImportOpen(true)}>导入历史ZIP…</button><button type="button" data-testid="history-refresh" disabled={busy} onClick={refresh}>刷新历史列表</button></div></div>
     <div className="material-history-content"><aside className="material-history-versions" aria-label="资料历史版本"><h3>历史版本</h3>
       <p className="material-history-help">本机归档显示目录记录时间；书内版本显示快照创建时间。列表未核验内容，打开后才校验文件与归属。</p>
       <ul>{snapshot?.versions.map(version => <li key={key(version)}><button type="button" data-testid="history-version" data-source={version.source} data-id={version.id} aria-pressed={selected ? key(selected) === key(version) : false} disabled={busy} onClick={() => open(version)}>
@@ -180,5 +183,5 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
       </>}
     </section></div>
     <footer><p>{blocked ? '请先保存各页修改并等待当前操作结束，再生成副本或ZIP。' : '恢复为独立目录或压缩ZIP；当前资料及历史原件保持不变。'}</p><div className="actions"><button type="button" data-testid="history-archive" disabled={busy || blocked || !preview || !!archiveResult} onClick={archive}>{archiveResult ? 'ZIP已完成' : '打包历史ZIP'}</button><button type="button" className="primary" data-testid="history-copy" disabled={busy || blocked || !preview || !!result} onClick={copy}>{result ? '已恢复为新副本' : busy ? '正在处理…' : '恢复为新副本'}</button></div></footer>
-  </section></div>;
+  </section></div>{importOpen && <MaterialHistoryImportPanel key={projectId} projectId={projectId} title={title} blocked={blocked} onBeforeCopy={onBeforeCopy} onBusy={setImportBusy} onClose={() => setImportOpen(false)} />}</>;
 }

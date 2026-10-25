@@ -181,6 +181,13 @@ async function main() {
     await history.locator('.material-history-side pre').filter({ hasText: world }).first().waitFor();
     assert.equal(await history.getByTestId('history-archive').isDisabled(), false);
     await page.screenshot({ path: path.join(evidence, `${newVersion}-history-preview.png`) });
+    await history.getByTestId('history-import-open').click();
+    const importing = page.getByTestId('history-import-panel');
+    await importing.waitFor();
+    assert.equal(await importing.getByTestId('history-import-pick').isDisabled(), false);
+    assert.equal(await importing.getByTestId('history-import-confirm').isDisabled(), true);
+    await page.screenshot({ path: path.join(evidence, `${newVersion}-history-import.png`) });
+    await importing.getByTestId('history-import-close').click();
     await history.getByTestId('history-close').click();
     await page.screenshot({ path: path.join(evidence, `${newVersion}-upgrade-sync.png`) });
     await panel.getByTestId('material-sync-close').click(); await exit();
@@ -199,7 +206,7 @@ async function main() {
     assert.deepEqual(await fs.readFile(receiptFile), receiptBefore, 'A repeat startup must retain the existing successful migration receipt'); await exit();
     assert.deepEqual(errors, []);
     await fs.writeFile(path.join(evidence, 'result.json'), JSON.stringify({ schemaVersion: 1, passed: true, scope: 'isolated packaged runtime overlay, not NSIS installer execution', oldVersion: '0.1.1-beta.1', newVersion, projectId: project.id,
-      checks: ['packaged app without NOVEL_WRITER_TEST_DATA', 'isolated existing profile', 'stable materials migration with retained source', 'immutable upgrade backup and repeat-start receipt', 'legacy named JSON byte-preserving migration', 'project identity and DOCX bytes', 'real U+3000 copied text', 'encrypted local model configuration survives', 'packaged history preview and archive action available', 'transport excludes credentials and settings', 'save-exit and restart'], manuscriptSha256: hash(manuscriptBefore), fixture }, null, 2));
+      checks: ['packaged app without NOVEL_WRITER_TEST_DATA', 'isolated existing profile', 'stable materials migration with retained source', 'immutable upgrade backup and repeat-start receipt', 'legacy named JSON byte-preserving migration', 'project identity and DOCX bytes', 'real U+3000 copied text', 'encrypted local model configuration survives', 'packaged history preview and archive action available', 'packaged history ZIP import dialog available without automatic writes', 'transport excludes credentials and settings', 'save-exit and restart'], manuscriptSha256: hash(manuscriptBefore), fixture }, null, 2));
     console.log(`Packaged upgrade simulation passed. Evidence: ${evidence}`);
   } finally { if (app) await app.evaluate(({ app: instance }) => instance.exit(0)).catch(() => {}); }
 }

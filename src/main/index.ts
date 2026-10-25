@@ -298,6 +298,15 @@ async function bootstrap() {
     'materials-sync:history-preview': request => materialSync.previewHistory(request),
     'materials-sync:history-copy': request => materialSync.copyHistory(request),
     'materials-sync:history-archive': request => materialSync.archiveHistory(request),
+    'materials-sync:history-import-open': async (id: string) => {
+      workspace.getProject(id);
+      const result = await dialog.showOpenDialog(window!, { title: '导入已完成的资料历史ZIP', properties: ['openFile'], filters: [{ name: '资料历史ZIP', extensions: ['zip'] }] });
+      if (result.canceled) return null;
+      if (result.filePaths.length !== 1) throw new Error('请选择一份本应用生成的资料历史ZIP');
+      return materialSync.openHistoryArchive(id, result.filePaths[0]!);
+    },
+    'materials-sync:history-import-preview': request => materialSync.previewHistoryArchive(request),
+    'materials-sync:history-import-copy': request => materialSync.importHistoryArchive(request),
     'docx:structure': (id: string, chapterPath: string, hash: string) => docxCopies.structure(id, chapterPath, hash),
     'docx:structure-batch': (id: string, chapterPath: string, actions, hash: string) => docxCopies.batchEdit(id, chapterPath, actions, hash),
     'materials:location': (id: string) => { workspace.getProject(id); return materialDirectory(materialsRoot, id); },
@@ -605,7 +614,7 @@ async function bootstrap() {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
-      if (exitToken && /^(ai:(start|test|models|review-batch)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && /^(ai:(start|test|models|review-batch)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive|history-import-open|history-import-copy))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
       const readOnly = /^(models:auxiliary|ai:(connections|tasks)|detector:(connections|reports|usage|batch-state)|memory:batch-state|knowledge:index-status|drafts:read|projects:list|chapters:(list|read|order|conflicts)|notes:read|book:read|characters:read|planning:read|memory:read|materials:location|recovery:(list|read))$/.test(channel);
       const tracked = !channel.startsWith('app:') && !readOnly;
       if (tracked) activeRequests++;

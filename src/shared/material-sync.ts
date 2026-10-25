@@ -96,3 +96,27 @@ export interface MaterialHistoryArchiveResult extends MaterialHistoryCopyResult 
   archiveBytes: number;
   sha256: string;
 }
+
+/** Only the main process authorizes archive paths; the renderer receives an expiring ticket. */
+export interface MaterialHistoryImportRequest {
+  projectId: string;
+  token: string;
+  fingerprint: string;
+  path?: string;
+}
+export interface MaterialHistoryImportCopyRequest {
+  projectId: string;
+  token: string;
+  fingerprint: string;
+}
+export interface MaterialHistoryImportPreview extends MaterialHistoryPreview {
+  token: string;
+  name: string;
+  archiveId: string;
+  archiveBytes: number;
+  sha256: string;
+}
+export interface MaterialHistoryImportResult extends MaterialHistoryCopyResult {
+  archiveId: string;
+  sha256: string;
+}

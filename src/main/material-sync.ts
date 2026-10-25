@@ -3,9 +3,10 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import JSZip from 'jszip';
-import type { MaterialHistoryArchiveResult, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryPreview, MaterialHistoryRequest, MaterialHistorySnapshot, MaterialHistoryVersion, MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
+import type { MaterialHistoryArchiveResult, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportRequest, MaterialHistoryImportResult, MaterialHistoryPreview, MaterialHistoryRequest, MaterialHistorySnapshot, MaterialHistoryVersion, MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
 import type { Workspace } from './workspace';
 import { isSafeRelative } from './nas-backup';
+import { parseMaterialHistoryArchive } from './material-history-zip';
 
 const META = '小说资料', TRANSPORT = '创作资料同步', VERSIONS = '版本';
 const MAX_FILE = 32 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024, MAX_FILES = 10000, MAX_REVISIONS = 1000;
@@ -21,6 +22,10 @@ const requestSchema = z.object({ projectId: z.uuid(), fingerprint: hashSchema.op
   resolutions: z.array(z.object({ path: relativeSchema, source: z.enum(['local', 'remote']) }).strict()).max(MAX_FILES).optional() }).strict();
 const historyRequestSchema = z.object({ projectId: z.uuid(), source: z.enum(['local', 'transport']), id: z.uuid(), path: relativeSchema.optional(), fingerprint: hashSchema.optional() }).strict();
 const historyCopySchema = z.object({ projectId: z.uuid(), source: z.enum(['local', 'transport']), id: z.uuid(), fingerprint: hashSchema }).strict();
+const historyImportSchema = z.object({ projectId: z.uuid(), token: z.uuid(), fingerprint: hashSchema, path: relativeSchema.optional() }).strict();
+const historyImportCopySchema = z.object({ projectId: z.uuid(), token: z.uuid(), fingerprint: hashSchema }).strict();
+const MAX_IMPORT_ARCHIVE = 80 * 1024 * 1024, MAX_IMPORT_MANIFEST = 8 * 1024 * 1024;
+const IMPORT_TICKET_LIFETIME = 15 * 60 * 1000, MAX_IMPORT_TICKETS = 8;
 type Entry = z.infer<typeof entrySchema>;
 type Manifest = z.infer<typeof manifestSchema>;
 type State = z.infer<typeof stateSchema>;
@@ -28,6 +33,9 @@ interface Tree { entries: Entry[]; data: Map<string, Buffer>; fingerprint: strin
 interface Revision { manifest: Manifest; folder: string }
 interface HistoryContext { projectId: string; source: 'local' | 'transport'; id: string; book: string; bookIdentity: string;
   current: Tree; history: Tree; fingerprint: string }
+interface HistoryImportTicket { projectId: string; token: string; file: string; fingerprint: string; expiresAt: number; consumed: boolean }
+interface HistoryImportContext { ticket: HistoryImportTicket; book: string; bookIdentity: string; current: Tree; history: Tree; fingerprint: string;
+  archive: Awaited<ReturnType<typeof parseMaterialHistoryArchive>>; completionHash: string }
 interface Inspection { snapshot: MaterialSyncSnapshot; state: State; stateRaw: string | null; local: Tree; remote: Tree;
   revisions: Revision[]; leaves: Revision[]; selected?: Revision; canonical: string; versions: string; book: string }
 const absent = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -166,6 +174,7 @@ function historyText(data: Buffer | undefined, relative: string) {
  * detect external changes. No watcher, SQLite database or credential is transported. */
 export class MaterialSyncService {
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly historyImportTickets = new Map<string, HistoryImportTicket>();
   constructor(private readonly workspace: Workspace, private readonly materialsRoot: string, private readonly userData: string) {}
   private serial<T>(action: () => Promise<T>): Promise<T> { const result = this.queue.then(action); this.queue = result.catch(() => {}); return result; }
   private project(projectId: string) { return this.workspace.getProject(z.uuid().parse(projectId)); }
@@ -352,8 +361,11 @@ export class MaterialSyncService {
       await this.assertHistoryUnchanged(context);
       const latestBase = await subDirectory(context.book, `${META}/资料历史恢复`, false), latestDirectory = latestBase ? await subDirectory(latestBase, copyId, false) : null;
       if (latestBase !== base || latestDirectory !== directory) throw new Error('资料历史恢复目录已变化，未发布完成清单');
+      await this.assertHistoryUnchanged(context);
+      // Source verification awaits filesystem reads; check the copy after it so
+      // a destination edit during those reads cannot receive a completion record.
       if ((await scanTree(files, request.projectId)).fingerprint !== context.history.fingerprint) throw new Error('资料历史副本暂存发生变化，未发布完成清单');
-      await this.assertHistoryUnchanged(context); await checkedDirectory(directory);
+      await checkedDirectory(directory);
       const manifest = { schemaVersion: 1, projectId: request.projectId, kind: 'material-history-copy', source: request.source, id: request.id,
         copyId, createdAt: new Date().toISOString(), fingerprint: context.fingerprint, entries: context.history.entries };
       await fs.writeFile(path.join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), { flag: 'wx' });
@@ -387,11 +399,133 @@ export class MaterialSyncService {
       const latestBase = await subDirectory(context.book, `${META}/资料历史归档`, false);
       const latestDirectory = latestBase ? await subDirectory(latestBase, archiveId, false) : null;
       if (latestBase !== base || latestDirectory !== directory) throw new Error('历史归档目录已变化，未发布完成清单');
+      await this.assertHistoryUnchanged(context);
       if (hash(await readRegular(directory, '历史资料.zip', 80 * 1024 * 1024)) !== sha256) throw new Error('历史归档暂存已变化，未发布完成清单');
-      await this.assertHistoryUnchanged(context); await checkedDirectory(directory);
+      await checkedDirectory(directory);
       await fs.writeFile(path.join(directory, '完成清单.json'), JSON.stringify({ ...manifest, file: '历史资料.zip', bytes, archiveBytes: archive.length, sha256 }, null, 2), { flag: 'wx' });
       return { schemaVersion: 1, projectId: request.projectId, source: request.source, id: request.id,
         directory, file, files: context.history.entries.length, bytes, archiveBytes: archive.length, sha256 };
+    });
+  }
+  private pruneHistoryImportTickets() {
+    const now = Date.now();
+    for (const [token, ticket] of this.historyImportTickets) if (ticket.expiresAt <= now) this.historyImportTickets.delete(token);
+  }
+  private historyImportTicket(projectId: string, token: string, fingerprint: string) {
+    this.pruneHistoryImportTickets();
+    const ticket = this.historyImportTickets.get(token);
+    if (!ticket || ticket.projectId !== projectId) throw new Error('历史ZIP票据已过期或已失效，请重新选择文件');
+    if (ticket.consumed) throw new Error('历史ZIP票据已使用，请核对已生成的新副本；需要另一次导入时重新选择文件');
+    if (ticket.fingerprint !== fingerprint) throw new Error('历史ZIP预览指纹不匹配，请重新选择文件');
+    return ticket;
+  }
+  private async readHistoryArchivePair(file: string) {
+    const originalParent = path.dirname(file), name = path.basename(file), parent = await checkedDirectory(originalParent);
+    relativeSchema.parse(name);
+    if (name !== '历史资料.zip') throw new Error('请选择本应用原名“历史资料.zip”，并保留同目录完成清单；不要重命名归档文件');
+    const parentBefore = await fs.lstat(originalParent);
+    const zipBefore = await fs.lstat(path.join(parent, name)), completionBefore = await fs.lstat(path.join(parent, '完成清单.json'));
+    const identity = (stat: Awaited<ReturnType<typeof fs.lstat>>) => ({ dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs });
+    const zip = await readRegular(parent, name, MAX_IMPORT_ARCHIVE), completion = await readRegular(parent, '完成清单.json', MAX_IMPORT_MANIFEST);
+    const parentAfter = await fs.lstat(originalParent), zipAfter = await fs.lstat(path.join(parent, name)), completionAfter = await fs.lstat(path.join(parent, '完成清单.json'));
+    if (await checkedDirectory(originalParent) !== parent || parentBefore.dev !== parentAfter.dev || parentBefore.ino !== parentAfter.ino
+      || JSON.stringify(identity(zipBefore)) !== JSON.stringify(identity(zipAfter)) || JSON.stringify(identity(completionBefore)) !== JSON.stringify(identity(completionAfter)))
+      throw new Error('历史ZIP、完成清单或来源目录在读取期间变化，请重新选择');
+    return { zip, completion, identity: { file, parent, parentDev: parentAfter.dev, parentIno: parentAfter.ino,
+      zip: identity(zipAfter), completion: identity(completionAfter) } };
+  }
+  private async inspectHistoryArchive(ticket: HistoryImportTicket): Promise<HistoryImportContext> {
+    const locations = await this.historyLocations(ticket.projectId);
+    let source: Awaited<ReturnType<MaterialSyncService['readHistoryArchivePair']>>;
+    try { source = await this.readHistoryArchivePair(ticket.file); }
+    catch (error) {
+      if (absent(error)) throw new Error('历史ZIP或同目录“完成清单.json”缺失，请保留完整归档目录后重新选择');
+      throw error;
+    }
+    const archive = await parseMaterialHistoryArchive(source.zip, source.completion, ticket.projectId);
+    const history = fromData(archive.data); checkPaths(history.entries);
+    for (const [relative, data] of history.data) validateMetadata(data, relative, ticket.projectId);
+    const canonicalStat = locations.canonical ? await fs.lstat(locations.canonical) : null;
+    const canonicalIdentity = canonicalStat ? { directory: locations.canonical, real: await checkedDirectory(locations.canonical!), dev: canonicalStat.dev, ino: canonicalStat.ino } : null;
+    const current = locations.canonical ? await scanTree(locations.canonical, ticket.projectId) : emptyTree();
+    const completionHash = hash(source.completion), fingerprint = hash(JSON.stringify({ projectId: ticket.projectId,
+      book: locations.book, bookIdentity: locations.bookIdentity, source: source.identity,
+      archiveHash: hash(source.zip), completionHash, canonicalIdentity, current: current.entries, history: history.entries }));
+    if (ticket.fingerprint && ticket.fingerprint !== fingerprint) throw new Error('历史ZIP、完成清单、当前资料或小说目录已变化，请重新选择并预览');
+    return { ticket, book: locations.book, bookIdentity: locations.bookIdentity, current, history, fingerprint, archive, completionHash };
+  }
+  private historyArchivePreview(context: HistoryImportContext, relative?: string): MaterialHistoryImportPreview {
+    const current = new Map(context.current.entries.map(entry => [entry.path, entry])), history = new Map(context.history.entries.map(entry => [entry.path, entry]));
+    const files: MaterialHistoryFile[] = [...new Set([...current.keys(), ...history.keys()])].sort().map(name => {
+      const left = current.get(name), right = history.get(name);
+      return { path: name, currentHash: left?.sha256 ?? null, historyHash: right?.sha256 ?? null, currentBytes: left?.bytes ?? 0,
+        historyBytes: right?.bytes ?? 0, change: !left ? 'history-only' : !right ? 'current-only' : left.sha256 === right.sha256 ? 'unchanged' : 'changed' };
+    });
+    const { manifest } = context.archive;
+    const result: MaterialHistoryImportPreview = { schemaVersion: 1, projectId: context.ticket.projectId, token: context.ticket.token,
+      source: manifest.source, id: manifest.id, fingerprint: context.fingerprint, name: path.basename(context.ticket.file),
+      archiveId: manifest.archiveId, archiveBytes: context.archive.archiveBytes, sha256: context.archive.sha256, files };
+    if (relative !== undefined) {
+      if (!current.has(relative) && !history.has(relative)) throw new Error('所选历史ZIP文件不存在，请重新预览');
+      const left = historyText(context.current.data.get(relative), relative), right = historyText(context.history.data.get(relative), relative);
+      result.detail = { path: relative, currentText: left.text, historyText: right.text, currentTruncated: left.truncated, historyTruncated: right.truncated };
+    }
+    return result;
+  }
+  /** The file path comes only from the main process's native file picker. */
+  openHistoryArchive(projectId: string, file: string): Promise<MaterialHistoryImportPreview> {
+    const id = z.uuid().parse(projectId), selected = z.string().min(1).max(32767).parse(file); this.project(id);
+    if (!path.isAbsolute(selected) || selected.includes('\0')) throw new Error('历史ZIP来源必须是已授权的完整文件路径');
+    const ticket: HistoryImportTicket = { projectId: id, token: randomUUID(), file: path.resolve(selected), fingerprint: '', expiresAt: Date.now() + IMPORT_TICKET_LIFETIME, consumed: false };
+    return this.serial(async () => {
+      const context = await this.inspectHistoryArchive(ticket); ticket.fingerprint = context.fingerprint;
+      ticket.expiresAt = Date.now() + IMPORT_TICKET_LIFETIME;
+      this.pruneHistoryImportTickets();
+      for (const [token, previous] of this.historyImportTickets) if (previous.projectId === id) this.historyImportTickets.delete(token);
+      while (this.historyImportTickets.size >= MAX_IMPORT_TICKETS) this.historyImportTickets.delete(this.historyImportTickets.keys().next().value!);
+      this.historyImportTickets.set(ticket.token, ticket);
+      return this.historyArchivePreview(context);
+    });
+  }
+  previewHistoryArchive(input: MaterialHistoryImportRequest): Promise<MaterialHistoryImportPreview> {
+    const request = historyImportSchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      const ticket = this.historyImportTicket(request.projectId, request.token, request.fingerprint);
+      return this.historyArchivePreview(await this.inspectHistoryArchive(ticket), request.path);
+    });
+  }
+  importHistoryArchive(input: MaterialHistoryImportCopyRequest): Promise<MaterialHistoryImportResult> {
+    const request = historyImportCopySchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      const ticket = this.historyImportTicket(request.projectId, request.token, request.fingerprint), context = await this.inspectHistoryArchive(ticket);
+      const base = (await subDirectory(context.book, `${META}/资料历史导入`, true))!, copyId = randomUUID(), directory = path.join(base, copyId);
+      await fs.mkdir(directory); const files = (await subDirectory(directory, 'files', true))!;
+      const targetIdentity = () => Promise.all([base, directory, files].map(async folder => {
+        const real = await checkedDirectory(folder), stat = await fs.lstat(folder);
+        return JSON.stringify({ real, dev: stat.dev, ino: stat.ino });
+      }));
+      const originalTargetIdentity = JSON.stringify(await targetIdentity()); await this.writeFiles(files, context.history);
+      const sourceUnchanged = async () => {
+        this.historyImportTicket(request.projectId, request.token, request.fingerprint);
+        const latest = await this.inspectHistoryArchive(ticket);
+        if (latest.book !== context.book || latest.bookIdentity !== context.bookIdentity) throw new Error('小说目录或归属已变化，导入暂存已保留');
+      };
+      const targetUnchanged = async () => {
+        const latestBase = await subDirectory(context.book, `${META}/资料历史导入`, false), latestDirectory = latestBase ? await subDirectory(latestBase, copyId, false) : null;
+        if (latestBase !== base || latestDirectory !== directory) throw new Error('历史ZIP导入目标目录已变化，未发布完成清单');
+        if (JSON.stringify(await targetIdentity()) !== originalTargetIdentity) throw new Error('历史ZIP导入目标目录身份已变化，未发布完成清单');
+        if ((await scanTree(files, request.projectId)).fingerprint !== context.history.fingerprint) throw new Error('历史ZIP导入暂存已变化，未发布完成清单');
+      };
+      // The final asynchronous source pass must precede the final target pass.
+      await sourceUnchanged(); await targetUnchanged(); await sourceUnchanged(); await targetUnchanged(); await checkedDirectory(directory);
+      const { manifest } = context.archive;
+      await fs.writeFile(path.join(directory, 'manifest.json'), JSON.stringify({ schemaVersion: 1, kind: 'material-history-import-copy',
+        projectId: request.projectId, source: manifest.source, id: manifest.id, archiveId: manifest.archiveId, archiveCreatedAt: manifest.createdAt,
+        archiveSha256: context.archive.sha256, completionSha256: context.completionHash, copyId, createdAt: new Date().toISOString(),
+        fingerprint: context.fingerprint, entries: context.history.entries }, null, 2), { flag: 'wx' });
+      ticket.consumed = true;
+      return { schemaVersion: 1, projectId: request.projectId, source: manifest.source, id: manifest.id, archiveId: manifest.archiveId,
+        sha256: context.archive.sha256, directory, files: context.history.entries.length, bytes: context.archive.bytes };
     });
   }
   private disabled(projectId: string, state: State): MaterialSyncSnapshot {
