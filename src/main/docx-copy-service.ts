@@ -2,23 +2,27 @@ import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import JSZip from 'jszip';
 import { z } from 'zod';
-import { appendTableRow, bodyParagraphTexts, listImages, listTables, removeTableRow, replaceImage, rewriteDocxParagraphs, rewriteHeaderTexts } from './docx-fidelity';
+import { bodyParagraphTexts, editDocxStructure, listImages, listTables, replaceImage, rewriteDocxParagraphs, structureHeader, structureTables } from './docx-fidelity';
 import type { Workspace } from './workspace';
+import type { DocxStructureAction, DocxStructureEditResult, DocxStructureSnapshot } from '../shared/docx-structure';
 
 const MAX_SOURCE = 20 * 1024 * 1024;
 const MAX_EXPANDED = 64 * 1024 * 1024;
 const MAX_ENTRIES = 4096;
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/u, '请重新打开原稿并提供当前文件版本');
-const paragraphSchema = z.string().max(100000).refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/u.test(value), '段落含不支持的 XML 控制字符');
+const paragraphSchema = z.string().max(100000).refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/u.test(value)
+  && !Array.from(value).some(char => { const code = char.codePointAt(0)!; return code >= 0xd800 && code <= 0xdfff; }), '段落含不支持的 XML 字符');
 const paragraphsSchema = z.array(paragraphSchema).max(10000).refine(value => value.reduce((sum, paragraph) => sum + Buffer.byteLength(paragraph), 0) <= 8 * 1024 * 1024, '改写文字过大，请分批处理');
 const indexSchema = z.number().int().min(0).max(9999);
 const partSchema = z.string().regex(/^word\/(?:header|footer)\d{0,4}\.xml$/u, '只能改写文档已有的页眉或页脚');
 const actionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('appendRow'), tableIndex: indexSchema }).strict(),
   z.object({ kind: z.literal('removeRow'), tableIndex: indexSchema, rowIndex: indexSchema }).strict(),
+  z.object({ kind: z.literal('cell'), tableIndex: indexSchema, rowIndex: indexSchema, cellIndex: indexSchema, paragraphs: paragraphsSchema.refine(value => value.length >= 1 && value.length <= 200, '单元格需要1至200个段落') }).strict(),
   z.object({ kind: z.literal('header'), part: partSchema, paragraphs: paragraphsSchema }).strict()
 ]);
-export type DocxCopyAction = z.infer<typeof actionSchema>;
+const batchSchema = z.array(actionSchema).min(1).max(100).refine(actions => actions.reduce((sum, action) => sum + ('paragraphs' in action ? action.paragraphs.reduce((bytes, text) => bytes + Buffer.byteLength(text), 0) : 0), 0) <= 8 * 1024 * 1024, '整批改写文字超过8 MiB，请分批处理');
+export type DocxCopyAction = DocxStructureAction;
 
 function sourceRequest(projectId: string, relative: string) {
   const id = z.uuid().parse(projectId), name = z.string().min(1).max(2000).parse(relative);
@@ -111,8 +115,22 @@ export class DocxCopyService {
     const paragraphs = paragraphsSchema.parse(bodyParagraphTexts(await zip.file('word/document.xml')!.async('string')));
     return { projectId: source.projectId, path: source.path, hash: source.hash, paragraphs };
   }
-  async images(projectId: string, relative: string) {
-    const source = await this.original(sourceRequest(projectId, relative));
+  async structure(projectId: string, relative: string, expectedHash: string): Promise<DocxStructureSnapshot> {
+    const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash), source = await this.original(request, hash), zip = await checkedArchive(source.bytes);
+    const read = async (name: string) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(await zip.file(name)!.async('uint8array')); } catch { throw new Error('DOCX XML 不是有效 UTF-8，已保留原稿，请用 Word/WPS 处理'); } };
+    const tables = structureTables(await read('word/document.xml')), names = Object.keys(zip.files).filter(name => /^word\/(?:header|footer)\d{0,4}\.xml$/u.test(name)).sort();
+    if (names.length > 100) throw new Error('页眉页脚部件超过100个，请用 Word/WPS 处理');
+    const headers = [];
+    for (const name of names) headers.push(structureHeader(await read(name), name));
+    const paragraphs = [...tables.flatMap(table => table.rows.flatMap(row => row.cells.flatMap(cell => cell.paragraphs))), ...headers.flatMap(header => header.paragraphs)];
+    if (tables.reduce((sum, table) => sum + table.rows.reduce((cells, row) => cells + row.cells.length, 0), 0) > 10000 || paragraphs.length > 10000
+      || paragraphs.reduce((sum, text) => sum + Buffer.byteLength(text), 0) > 8 * 1024 * 1024) throw new Error('DOCX 结构或文字超过安全预览上限，请用 Word/WPS 处理');
+    // Recheck the frozen source after all ZIP/XML work, before returning a UI baseline.
+    await this.workspace.readOriginalChapter(request.projectId, source.path, source.hash);
+    return { schemaVersion: 1, projectId: source.projectId, path: source.path, hash: source.hash, tables, headers };
+  }
+  async images(projectId: string, relative: string, expectedHash?: string) {
+    const source = await this.original(sourceRequest(projectId, relative), expectedHash === undefined ? undefined : hashSchema.parse(expectedHash));
     return listImages(source.bytes);
   }
   async rewrite(projectId: string, relative: string, paragraphs: string[], expectedHash: string) {
@@ -123,14 +141,15 @@ export class DocxCopyService {
     return { path: output.path, paragraphs: result.paragraphs, changed: result.changed };
   }
   async edit(projectId: string, relative: string, action: unknown, expectedHash: string) {
-    const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash), frozen = actionSchema.parse(action);
-    const source = await this.original(request, hash);
-    const result = frozen.kind === 'appendRow' ? await appendTableRow(source.bytes, frozen.tableIndex)
-      : frozen.kind === 'removeRow' ? await removeTableRow(source.bytes, frozen.tableIndex, frozen.rowIndex)
-        : await rewriteHeaderTexts(source.bytes, frozen.part, frozen.paragraphs);
+    const result = await this.batchEdit(projectId, relative, [action], expectedHash);
+    return { path: result.path, changed: result.changed };
+  }
+  async batchEdit(projectId: string, relative: string, actions: unknown, expectedHash: string): Promise<DocxStructureEditResult> {
+    const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash), frozen = batchSchema.parse(structuredClone(actions));
+    const source = await this.original(request, hash), result = await editDocxStructure(source.bytes, frozen);
     await checkedArchive(result.bytes);
     const output = await this.workspace.publishOriginalCopy(request.projectId, source.path, source.hash, result.bytes, '结构编辑');
-    return { path: output.path, changed: result.changed };
+    return { projectId: request.projectId, sourcePath: source.path, sourceHash: source.hash, path: output.path, changed: result.changed };
   }
   async replace(projectId: string, relative: string, mediaName: string, image: Uint8Array, expectedHash: string) {
     const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash);

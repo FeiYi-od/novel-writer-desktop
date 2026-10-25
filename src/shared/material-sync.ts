@@ -30,3 +30,69 @@ export interface MaterialSyncRequest {
   remoteRevision?: string;
   resolutions?: { path: string; source: 'local' | 'remote' }[];
 }
+
+export type MaterialHistorySource = 'local' | 'transport';
+export interface MaterialHistoryVersion {
+  id: string;
+  source: MaterialHistorySource;
+  createdAt: string;
+  /** Local archives have no manifest; counts are verified when opened. */
+  files: number | null;
+  bytes: number | null;
+}
+export interface MaterialHistorySnapshot {
+  schemaVersion: 1;
+  projectId: string;
+  versions: MaterialHistoryVersion[];
+}
+export interface MaterialHistoryRequest {
+  projectId: string;
+  source: MaterialHistorySource;
+  id: string;
+  path?: string;
+  /** Reopening a file may require the same verified history/current versions. */
+  fingerprint?: string;
+}
+export interface MaterialHistoryFile {
+  path: string;
+  change: 'unchanged' | 'history-only' | 'current-only' | 'changed';
+  currentHash: string | null;
+  historyHash: string | null;
+  currentBytes: number;
+  historyBytes: number;
+}
+export interface MaterialHistoryPreview {
+  schemaVersion: 1;
+  projectId: string;
+  source: MaterialHistorySource;
+  id: string;
+  fingerprint: string;
+  files: MaterialHistoryFile[];
+  detail?: {
+    path: string;
+    currentText?: string;
+    historyText?: string;
+    currentTruncated: boolean;
+    historyTruncated: boolean;
+  };
+}
+export interface MaterialHistoryCopyRequest {
+  projectId: string;
+  source: MaterialHistorySource;
+  id: string;
+  fingerprint: string;
+}
+export interface MaterialHistoryCopyResult {
+  schemaVersion: 1;
+  projectId: string;
+  source: MaterialHistorySource;
+  id: string;
+  directory: string;
+  files: number;
+  bytes: number;
+}
+export interface MaterialHistoryArchiveResult extends MaterialHistoryCopyResult {
+  file: string;
+  archiveBytes: number;
+  sha256: string;
+}

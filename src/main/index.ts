@@ -39,6 +39,7 @@ import { probeTargets } from './nas-probe';
 import { detectPathLocation } from './drive-type';
 import { backupBook, restoreBackup, verifyBackup } from './nas-backup';
 import { DocxCopyService } from './docx-copy-service';
+import { validateReplacementImage } from './image-limits';
 import { runOfflineDrill } from './drill';
 import { inspectKeys, restoreFromBackup } from './key-recovery';
 import { listPreviousVersions, listRawDrafts, prunePreviousVersions, pruneRawDrafts, readPreviousVersion, readRawDraft, restorePreviousVersion, restoreRawDraft } from './recovery';
@@ -293,6 +294,12 @@ async function bootstrap() {
     'materials-sync:status': (id: string, revision?: string) => materialSync.status(id, revision),
     'materials-sync:configure': (id: string, enabled: boolean) => materialSync.configure(id, enabled),
     'materials-sync:synchronize': request => materialSync.synchronize(request),
+    'materials-sync:history': (id: string) => materialSync.history(id),
+    'materials-sync:history-preview': request => materialSync.previewHistory(request),
+    'materials-sync:history-copy': request => materialSync.copyHistory(request),
+    'materials-sync:history-archive': request => materialSync.archiveHistory(request),
+    'docx:structure': (id: string, chapterPath: string, hash: string) => docxCopies.structure(id, chapterPath, hash),
+    'docx:structure-batch': (id: string, chapterPath: string, actions, hash: string) => docxCopies.batchEdit(id, chapterPath, actions, hash),
     'materials:location': (id: string) => { workspace.getProject(id); return materialDirectory(materialsRoot, id); },
     'materials:generate': request => ai.startMaterial(request),
     'materials:import': async (id: string) => {
@@ -458,7 +465,7 @@ async function bootstrap() {
     'states:save': (id: string, list: { id: string; character: string; label: string; note: string; fromChapter?: number; toChapter?: number }[], hash: string) => characterStates.save(id, list, hash),
     'blueprints:read': (id: string) => blueprints.read(id),
     'blueprints:save': (id: string, list: { id: string; scope: 'volume' | 'chapter'; ref: string; title: string; goals: string; beats: string[]; sourceHash?: string; updatedAt: string }[], hash: string) => blueprints.save(id, list, hash),
-    'docx:images': (id: string, chapterPath: string) => docxCopies.images(id, chapterPath),
+    'docx:images': (id: string, chapterPath: string, hash?: string) => docxCopies.images(id, chapterPath, hash),
     'docx:replaceImage': async (id: string, chapterPath: string, mediaName: string, expectedHash: string) => {
       // The renderer cannot supply arbitrary local file paths. An explicit native
       // picker grants access to this one image; source version is rechecked after it.
@@ -469,8 +476,14 @@ async function bootstrap() {
       if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('图片文件无效或超过20 MiB');
       const imageBytes = await fs.readFile(file);
       if (imageBytes.length > 20 * 1024 * 1024 || imageBytes.length !== stat.size) throw new Error('图片读取期间发生变化或超过20 MiB，请重新选择');
+      const expectedSize = validateReplacementImage(imageBytes);
       const image = nativeImage.createFromBuffer(imageBytes);
       if (image.isEmpty()) throw new Error('无法识别所选图片，原稿已保留');
+      const decodedSize = image.getSize();
+      const sameAxes = decodedSize.width === expectedSize.width && decodedSize.height === expectedSize.height;
+      const rotatedAxes = decodedSize.width === expectedSize.height && decodedSize.height === expectedSize.width;
+      if ((!sameAxes && !rotatedAxes) || decodedSize.width > 16384 || decodedSize.height > 16384 || decodedSize.width * decodedSize.height > 32_000_000)
+        throw new Error('图片解码尺寸与预检不符或超过安全上限，原稿已保留');
       return docxCopies.replace(id, chapterPath, mediaName, /\.png$/iu.test(mediaName) ? image.toPNG() : image.toJPEG(95), expectedHash);
     },
     'docx:insight': (id: string, chapterPath: string) => docxCopies.insight(id, chapterPath),
@@ -592,7 +605,7 @@ async function bootstrap() {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
-      if (exitToken && /^(ai:(start|test|models|review-batch)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && /^(ai:(start|test|models|review-batch)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
       const readOnly = /^(models:auxiliary|ai:(connections|tasks)|detector:(connections|reports|usage|batch-state)|memory:batch-state|knowledge:index-status|drafts:read|projects:list|chapters:(list|read|order|conflicts)|notes:read|book:read|characters:read|planning:read|memory:read|materials:location|recovery:(list|read))$/.test(channel);
       const tracked = !channel.startsWith('app:') && !readOnly;
       if (tracked) activeRequests++;

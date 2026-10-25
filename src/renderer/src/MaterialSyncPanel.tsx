@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MaterialSyncDifference, MaterialSyncSnapshot } from '../../shared/material-sync';
 import { useSaveBeforeExit } from './save-before-exit';
+import { MaterialHistoryPanel } from './MaterialHistoryPanel';
 import './material-sync.css';
 
 interface MaterialSyncPanelProps {
@@ -45,6 +46,8 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
   const currentProject = useRef(projectId); currentProject.current = projectId;
   const mounted = useRef(false); const request = useRef(0); const running = useRef(false);
   const hasSelections = Object.keys(resolutions).length > 0 || (!!selectedRevision && (snapshot?.remoteRevisions.length ?? 0) > 1);
@@ -54,10 +57,10 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
   const valid = (id: string, ticket: number) => mounted.current && currentProject.current === id && request.current === ticket;
 
   useSaveBeforeExit('固定资料同步', () => ({
-    dirty: hasSelections, busy,
+    dirty: hasSelections, busy: busy || historyBusy,
     reason: '固定资料同步还有未执行的版本选择，请先同步或关闭面板放弃选择，再保存退出'
   }));
-  useEffect(() => { onBusy?.(busy); return () => { onBusy?.(false); }; }, [busy, onBusy]);
+  useEffect(() => { onBusy?.(busy || historyBusy); return () => { onBusy?.(false); }; }, [busy, historyBusy, onBusy]);
 
   const accept = (result: MaterialSyncSnapshot, id: string, revision?: string) => {
     if (result.projectId !== id) throw new Error('同步结果的小说标识不匹配，未在本页应用');
@@ -65,7 +68,7 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
     setSelectedRevision(revision && result.remoteRevisions.some(item => item.id === revision) ? revision : '');
   };
   const operate = async (action: (id: string) => Promise<MaterialSyncSnapshot>, options: { mutate?: boolean; revision?: string; synchronized?: boolean } = {}) => {
-    if (running.current || (options.mutate && blocked)) return;
+    if (running.current || historyOpen || (options.mutate && blocked)) return;
     const id = projectId; const ticket = ++request.current;
     running.current = true; setBusy(true); setError(''); setNotice('');
     try {
@@ -95,7 +98,7 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
   }, [projectId]);
 
   const discardSelections = () => !hasSelections || window.confirm('放弃尚未执行的同步版本选择？文件不会因此改变。');
-  const close = () => { if (!running.current && discardSelections()) onClose(); };
+  const close = () => { if (!historyOpen && !running.current && discardSelections()) onClose(); };
   const refresh = () => { if (!running.current && discardSelections()) void operate(id => window.writer.materialSyncStatus(id)); };
   const chooseRevision = (revision: string) => {
     if (running.current || !discardSelections()) return;
@@ -108,7 +111,7 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
     void operate(id => window.writer.synchronizeMaterials({ projectId: id, fingerprint, remoteRevision: revision, resolutions: choices }), { mutate: true, synchronized: true });
   };
 
-  return <div className="modal-overlay"><section className="book-modal material-sync-panel" role="dialog" aria-modal="true" aria-labelledby="material-sync-title" data-testid="material-sync-panel" onKeyDown={event => {
+  return <><div className="modal-overlay" inert={historyOpen} aria-hidden={historyOpen || undefined}><section className="book-modal material-sync-panel" role="dialog" aria-modal="true" aria-labelledby="material-sync-title" data-testid="material-sync-panel" onKeyDown={event => {
     if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); close(); }
   }}>
     <header><div><h2 id="material-sync-title">固定资料同步</h2><p>{title}</p></div><button type="button" aria-label="关闭固定资料同步" data-testid="material-sync-close" disabled={busy} onClick={close}>关闭</button></header>
@@ -143,9 +146,12 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
         </article>)}
         {snapshot.files.length === 0 && !mustChooseRevision && <p className="material-sync-help">{snapshot.enabled ? '当前没有文件内容差异。' : '启用后可核对本书的固定资料。'}</p>}
       </div>
-      {snapshot.historyDirectory && <details className="material-sync-history"><summary>历史版本与原稿保护</summary><p>同步替换前的本机资料会保留，书内旧版本也会保留。选择删除状态时，旧内容仍可从历史中找回。</p><p>本机历史目录：<code>{snapshot.historyDirectory}</code></p></details>}
       {snapshot.lastSyncedAt && <p className="material-sync-help">本机上次核对完成：{date(snapshot.lastSyncedAt)}</p>}
     </>}
+    <details className="material-sync-history"><summary>历史版本与原稿保护</summary><p>浏览本机替换前归档及全部已完成的书内版本，可比较后恢复为独立副本。当前资料、同步设置和外层尚未执行的选择都会保留。</p>
+      {snapshot?.historyDirectory && <p>本机历史目录：<code>{snapshot.historyDirectory}</code></p>}
+      <button type="button" data-testid="history-open" disabled={busy || historyOpen} onClick={() => setHistoryOpen(true)}>浏览历史与找回资料</button>
+    </details>
     <footer><p>{mustChooseRevision ? '请先选择本次采用的传输版本。' : unresolved > 0 ? `还有 ${unresolved} 项冲突需要明确选择。` : '未执行的选择不会写入任何资料。'}</p><button type="button" className="primary" data-testid="material-sync-run" disabled={busy || blocked || !snapshot?.enabled || mustChooseRevision || unresolved > 0 || snapshot.status === 'blocked'} onClick={sync}>{busy ? '正在处理…' : conflicts.length > 0 ? '按选择合并并同步' : '立即同步'}</button></footer>
-  </section></div>;
+  </section></div>{historyOpen && <MaterialHistoryPanel key={projectId} projectId={projectId} title={title} blocked={blocked} onBeforeCopy={onBeforeSync} onBusy={setHistoryBusy} onClose={() => setHistoryOpen(false)} />}</>;
 }

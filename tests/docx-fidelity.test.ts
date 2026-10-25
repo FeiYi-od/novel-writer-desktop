@@ -51,12 +51,12 @@ test('Word 保真改写：段落数不一致时拒绝，避免破坏原稿', asy
   await assert.rejects(rewriteDocxParagraphs(notDocx, []), /缺少 word\/document.xml/u);
 });
 
-test('段落扫描：多 run 段落拼接、未闭合时安全停止', async () => {
+test('段落扫描：多 run 段落拼接、未闭合 XML 保守拒绝', async () => {
   const xml = `<w:body>${paragraph('前半').replace('</w:p>', `<w:r><w:t>后半</w:t></w:r></w:p>`)}<w:tbl>${paragraph('x')}</w:tbl></w:body>`;
   const blocks = topLevelParagraphs(xml);
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0]!.text, '前半后半');
-  assert.equal(topLevelParagraphs('<w:body><w:p><w:r><w:t>没有结束</w:t></w:r>').length, 0, '未闭合段落不计入');
+  assert.throws(() => topLevelParagraphs('<w:body><w:p><w:r><w:t>没有结束</w:t></w:r>'), /未闭合/u, '损坏 XML 不能作为可编辑基准');
 });
 
 async function bodyParagraphTextsFrom(bytes: Uint8Array) {
@@ -140,6 +140,42 @@ test('Word 自闭合文本节点：不吞并后面的文字，空节点可填写
   assert.deepEqual(await bodyParagraphTextsFrom(next.bytes), ['新文', '　　填写。']);
   const xml = await (await JSZip.loadAsync(next.bytes)).file('word/document.xml')!.async('string');
   assert.equal((xml.match(/<w:r>/gu) ?? []).length, (xml.match(/<\/w:r>/gu) ?? []).length, '文字改写不能吞掉run结束标签');
+});
+
+test('Word 注释与 PI 中的伪段落/表格/文字不参与扫描，改写只修改真实节点且保留原标记', async () => {
+  const outsideComment = '<!-- <w:tbl><w:p><w:r><w:t>伪正文</w:t></w:r></w:p> -->';
+  const outsidePi = '<?ignore <w:p><w:r><w:t>伪PI段落</w:t></w:r></w:p> ?>';
+  const fakeStyle = '<!-- <w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>伪文字</w:t></w:r> -->';
+  const inTextComment = '<!-- </w:t><w:t>伪结束文字</w:t><w:p/> -->', inTextPi = '<?ignore </w:t><w:t>伪PI文字</w:t> ?>';
+  const real = `<w:p>${fakeStyle}<w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>前${inTextComment}${inTextPi}后&amp;文</w:t></w:r></w:p>`;
+  const table = `<w:tbl><w:tr><w:tc>${paragraph('表格不动')}</w:tc></w:tr></w:tbl>`;
+  const original = await docxFromBody(outsideComment + outsidePi + real + table), before = await JSZip.loadAsync(original), beforeXml = await before.file('word/document.xml')!.async('string');
+  assert.deepEqual(bodyParagraphTexts(beforeXml), ['前后&文']);
+  const unchanged = await rewriteDocxParagraphs(original, ['前后&文']);
+  assert.equal(await (await JSZip.loadAsync(unchanged.bytes)).file('word/document.xml')!.async('string'), beforeXml);
+  const edited = await rewriteDocxParagraphs(original, ['　　改写<&>😀', '　　新增正文'], { structural: true });
+  const xml = await (await JSZip.loadAsync(edited.bytes)).file('word/document.xml')!.async('string');
+  assert.deepEqual(bodyParagraphTexts(xml), ['　　改写<&>😀', '　　新增正文']);
+  for (const token of [outsideComment, outsidePi, fakeStyle, inTextComment, inTextPi, table]) assert.ok(xml.includes(token), `原标记/表格必须原字节保留：${token}`);
+  const added = topLevelParagraphs(xml)[1]!, addedXml = xml.slice(added.start, added.end);
+  assert.match(addedXml, /<w:jc w:val="center"\/>/u); assert.match(addedXml, /<w:i\/>/u);
+  assert.doesNotMatch(addedXml, /<w:b\/>|伪文字|w:val="right"/u, '新增段落不能从注释伪标签复制样式');
+});
+
+test('Word 删除尾部纯文字段落不把注释中的伪书签/域当作真实关联对象', async () => {
+  const fake = '<!-- <w:bookmarkStart w:id="1"/><w:fldChar/><w:sectPr/> -->';
+  const original = await docxFromBody(paragraph('保留') + `<w:p>${fake}<w:r><w:t>纯文字尾段</w:t></w:r></w:p>`);
+  const edited = await rewriteDocxParagraphs(original, ['保留'], { structural: true });
+  assert.deepEqual(await bodyParagraphTextsFrom(edited.bytes), ['保留']);
+});
+
+test('Word 文本节点的 CDATA、未知实体和非法数值实体明确拒绝，不能隐式修复', async () => {
+  for (const text of ['<![CDATA[不支持]]>', '&unknown;', '&#0;', '&#xD800;', '\u0001']) {
+    const original = await docxFromBody(`<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`);
+    await assert.rejects(rewriteDocxParagraphs(original, ['不能写入']), /CDATA|XML|实体|字符/u);
+  }
+  const valid = await docxFromBody('<w:p><w:r><w:t>&#x4E2D;&#x6587;&#x1F600;</w:t></w:r></w:p>');
+  assert.deepEqual(await bodyParagraphTextsFrom(valid), ['中文😀']);
 });
 test('表格行增删：追加空行继承样式、删除指定行，表格外内容与页眉图片不动', async () => {
   const original = await buildDocx();

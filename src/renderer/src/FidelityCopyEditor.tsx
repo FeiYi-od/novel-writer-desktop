@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { exitSaves, useSaveBeforeExit } from './save-before-exit';
+import { DocxStructurePanel } from './DocxStructurePanel';
+import { DocxImagesPanel } from './DocxImagesPanel';
 
 export type FidelityTarget = { projectId: string; path: string; hash: string };
 const cleanError = (error: unknown) => String(error instanceof Error ? error.message : error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/u, '');
@@ -9,12 +11,14 @@ const PAGE_SIZE = 50;
 /** Edits a frozen disk version rather than the lossy HTML manuscript preview. */
 export function FidelityCopyEditor({ target, blocked, onDirty, onSaved, onClose, onSaveExit }: {
   target: FidelityTarget; blocked: boolean; onDirty: (value: boolean) => void;
-  onSaved: (target: FidelityTarget, result: { path: string; paragraphs: number; changed: number }) => Promise<void>;
+  onSaved: (target: FidelityTarget, result: { path: string; paragraphs?: number; changed: number }) => Promise<void>;
   onClose: () => void;
   onSaveExit: () => Promise<void>;
 }) {
   const [paragraphs, setParagraphs] = useState<string[]>([]), [selected, setSelected] = useState(0);
   const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(true), [error, setError] = useState('');
+  const [structureOpen, setStructureOpen] = useState(false), [structureDirty, setStructureDirty] = useState(false), [structureBusy, setStructureBusy] = useState(false);
+  const [imagesOpen, setImagesOpen] = useState(false), [imagesBusy, setImagesBusy] = useState(false);
   const original = useRef<string[]>([]), current = useRef<string[]>([]), busyRef = useRef(true), alive = useRef(true);
   const dialog = useRef<HTMLElement>(null);
   const dirty = loaded && !sameParagraphs(paragraphs, original.current);
@@ -32,9 +36,9 @@ export function FidelityCopyEditor({ target, blocked, onDirty, onSaved, onClose,
     });
     return () => { disposed = true; alive.current = false; };
   }, [target.projectId, target.path, target.hash]);
-  useEffect(() => { onDirty(dirty || busy); return () => onDirty(false); }, [dirty, busy, onDirty]);
+  useEffect(() => { onDirty(dirty || busy || structureDirty || structureBusy || imagesBusy); return () => onDirty(false); }, [dirty, busy, structureDirty, structureBusy, imagesBusy, onDirty]);
   async function save() {
-    if (busyRef.current) throw new Error('Word 副本正在处理，请等待完成');
+    if (busyRef.current || structureBusy || imagesBusy) throw new Error('Word 副本正在处理，请等待完成');
     if (!loaded) throw new Error('尚未读取原稿，不能保存');
     if (sameParagraphs(current.current, original.current)) return;
     const frozen = [...current.current]; busyRef.current = true; setBusy(true); setError('');
@@ -47,11 +51,11 @@ export function FidelityCopyEditor({ target, blocked, onDirty, onSaved, onClose,
     } catch (failure) { if (alive.current) setError(cleanError(failure)); throw failure; }
     finally { release(); busyRef.current = false; if (alive.current) setBusy(false); }
   }
-  useSaveBeforeExit('Word 保真副本', () => ({ dirty: loaded && !sameParagraphs(current.current, original.current), busy: busyRef.current, save }));
-  const close = () => { if (!busyRef.current && !blocked && (!dirty || window.confirm('保真副本有未保存修改，确定放弃并关闭吗？'))) onClose(); };
+  useSaveBeforeExit('Word 保真副本', () => ({ dirty: loaded && !sameParagraphs(current.current, original.current), busy: busyRef.current || structureBusy || imagesBusy, save }));
+  const close = () => { if (!structureOpen && !imagesOpen && !busyRef.current && !blocked && (!dirty || window.confirm('保真副本有未保存修改，确定放弃并关闭吗？'))) onClose(); };
   const update = (next: string[]) => { current.current = next; setParagraphs(next); setError(''); };
   const page = Math.floor(selected / PAGE_SIZE), pageStart = page * PAGE_SIZE;
-  return <div className="modal-overlay"><section ref={dialog} tabIndex={-1} className="book-modal fidelity-copy" role="dialog" aria-modal="true" aria-label="Word 保真副本编辑" onKeyDown={event => {
+  return <><div className="modal-overlay" inert={structureOpen || imagesOpen} aria-hidden={structureOpen || imagesOpen || undefined}><section ref={dialog} tabIndex={-1} className="book-modal fidelity-copy" role="dialog" aria-modal="true" aria-label="Word 保真副本编辑" onKeyDown={event => {
     if (event.nativeEvent.isComposing) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation(); if (!busy && !blocked && dirty) void save().catch(() => {}); }
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
@@ -62,7 +66,7 @@ export function FidelityCopyEditor({ target, blocked, onDirty, onSaved, onClose,
     }
   }}>
     <header><div><h2>Word 保真副本编辑</h2><p>{target.path}</p></div><button disabled={busy || blocked} onClick={close}>关闭</button></header>
-    <p className="fidelity-copy-help">修改正文段落后另存新 DOCX。原稿保留，表格、图片及页眉等部件沿用原文件；不支持的结构会提示并停止保存。</p>
+    <p className="fidelity-copy-help">修改正文段落后另存新 DOCX。原稿保留，表格、图片及页眉等部件沿用原文件；不支持的结构会提示并停止保存。<button type="button" data-testid="docx-structure-open" disabled={busy || blocked || dirty || structureOpen || imagesOpen} onClick={() => { if (!busyRef.current && !dirty) setStructureOpen(true); }}>表格与页眉页脚…</button><button type="button" data-testid="docx-images-open" disabled={busy || blocked || dirty || structureOpen || imagesOpen} onClick={() => { if (!busyRef.current && !dirty) setImagesOpen(true); }}>替换已有图片…</button>{dirty && <span>正文段落有未保存修改，请先另存保真 DOCX，再打开新副本编辑结构或图片；当前正文修改保留。</span>}</p>
     {error && <div role="alert" className="error">{error}</div>}
     <div className="fidelity-copy-content">
       <aside><div className="fidelity-copy-pagination"><button disabled={busy || blocked || page === 0} onClick={() => setSelected(Math.max(0, pageStart - PAGE_SIZE))}>上一页</button><span>{paragraphs.length ? page + 1 : 0} / {Math.ceil(paragraphs.length / PAGE_SIZE)}</span><button disabled={busy || blocked || pageStart + PAGE_SIZE >= paragraphs.length} onClick={() => setSelected(pageStart + PAGE_SIZE)}>下一页</button></div>
@@ -74,5 +78,5 @@ export function FidelityCopyEditor({ target, blocked, onDirty, onSaved, onClose,
       </div>
     </div>
     <footer><span role="status">{busy ? '正在处理…' : dirty ? '副本有未保存修改' : loaded ? `已读取 ${paragraphs.length} 个正文段落` : '未读取原稿'}</span><div><button disabled={busy || blocked} onClick={close}>取消</button><button className="fidelity-exit" disabled={busy || blocked} onClick={() => void onSaveExit()}>保存副本并退出应用</button><button className="primary" data-testid="fidelity-save" disabled={busy || blocked || !dirty} onClick={() => void save().catch(() => {})}>另存保真 DOCX</button></div></footer>
-  </section></div>;
+  </section></div>{structureOpen && <DocxStructurePanel key={`${target.projectId}:${target.path}:${target.hash}`} target={target} blocked={blocked} onDirty={setStructureDirty} onBusy={setStructureBusy} onClose={() => setStructureOpen(false)} onSaveExit={onSaveExit} onSaved={result => onSaved(target, result)} />}{imagesOpen && <DocxImagesPanel key={`${target.projectId}:${target.path}:${target.hash}`} target={target} blocked={blocked} onBusy={setImagesBusy} onClose={() => setImagesOpen(false)} onSaved={result => onSaved(target, { path: result.path, changed: 1 })} />}</>;
 }

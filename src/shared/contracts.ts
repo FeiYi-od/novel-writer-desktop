@@ -1,4 +1,5 @@
-import type { MaterialSyncRequest, MaterialSyncSnapshot } from './material-sync';
+import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult } from './material-sync';
+import type { DocxStructureSnapshot, DocxStructureAction, DocxStructureEditResult } from './docx-structure';
 
 export interface RichNode {
   type: string;
@@ -62,6 +63,12 @@ export interface WriterApi {
   materialSyncStatus(projectId: string, remoteRevision?: string): Promise<MaterialSyncSnapshot>;
   configureMaterialSync(projectId: string, enabled: boolean): Promise<MaterialSyncSnapshot>;
   synchronizeMaterials(request: MaterialSyncRequest): Promise<MaterialSyncSnapshot>;
+  materialHistory(projectId: string): Promise<MaterialHistorySnapshot>;
+  previewMaterialHistory(request: MaterialHistoryRequest): Promise<MaterialHistoryPreview>;
+  copyMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryCopyResult>;
+  archiveMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryArchiveResult>;
+  readDocxStructure(projectId: string, chapterPath: string, expectedHash: string): Promise<DocxStructureSnapshot>;
+  editDocxStructureBatch(projectId: string, chapterPath: string, actions: DocxStructureAction[], expectedHash: string): Promise<DocxStructureEditResult>;
   chapterConfirmations(projectId: string): Promise<ChapterConfirmationSnapshot>;
   previewChapterConfirmation(projectId: string, path: string): Promise<ChapterConfirmationPreview>;
   confirmChapterVersion(request: ConfirmChapterVersionRequest): Promise<ChapterConfirmationSnapshot>;
@@ -204,7 +211,7 @@ export interface WriterApi {
   nasLocation(target: string): Promise<'local' | 'unc' | 'network' | 'unknown'>;
   keyStatus(): Promise<{ file: string; backup: string; connections: { id: string; name: string; state: 'ok' | 'missing' | 'unreadable' }[]; backupUsable: boolean }>;
   recoverKeys(): Promise<AIConnectionSnapshot>;
-  docxImages(projectId: string, chapterPath: string): Promise<{ name: string; bytes: number }[]>;
+  docxImages(projectId: string, chapterPath: string, expectedHash?: string): Promise<{ name: string; bytes: number }[]>;
   replaceDocxImage(projectId: string, chapterPath: string, mediaName: string, expectedHash: string): Promise<{ path: string; name: string } | null>;
   docxInsight(projectId: string, chapterPath: string): Promise<{ tables: { index: number; rows: number; cellsPerRow: number[]; preview: string }[]; headers: string[] }>;
   editDocxStructure(projectId: string, chapterPath: string, action: { kind: 'appendRow' | 'removeRow' | 'header'; tableIndex?: number; rowIndex?: number; part?: string; paragraphs?: string[] }, expectedHash: string): Promise<{ changed: number; path: string }>;

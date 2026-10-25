@@ -51,6 +51,17 @@ test('Word副本：安全读取、改文字/结构只另存，原稿/表格/页�
   assert.deepEqual(await fs.readFile(path.join(f.book, '原稿.docx')), f.original);
 });
 
+test('Word图片清单：可绑定冻结来源版本，外变和未知书拒绝且旧读取调用兼容', async t => {
+  const f = await fixture(t);
+  assert.deepEqual(await f.service.images(f.project.id, '原稿.docx', f.source.hash), []);
+  assert.deepEqual(await f.service.images(f.project.id, '原稿.docx'), []);
+  await assert.rejects(f.service.images(randomUUID(), '原稿.docx', f.source.hash));
+  await assert.rejects(f.service.images(f.project.id, '原稿.docx', 'invalid-hash'));
+  await fs.writeFile(path.join(f.book, '原稿.docx'), Buffer.concat([f.original, Buffer.from('external')]));
+  await assert.rejects(f.service.images(f.project.id, '原稿.docx', f.source.hash), /变化|版本/u);
+  assert.equal((await fs.readdir(f.book)).filter(name => name.endsWith('.docx')).length, 1);
+});
+
 test('Word副本：变换后发布前来源变化拒绝，不生成混合版本副本', async t => {
   const f = await fixture(t), publish = f.workspace.publishOriginalCopy.bind(f.workspace);
   const changed = Buffer.concat([f.original, Buffer.from('external edit')]);

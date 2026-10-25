@@ -62,6 +62,8 @@ async function files(root: string, relative = ''): Promise<string[]> {
 
 async function main() {
   assert.equal(process.platform, 'win32', 'This packaged upgrade simulation requires Windows');
+  const newVersion = JSON.parse(await fs.readFile(path.resolve('package.json'), 'utf8')).version as string;
+  assert.match(newVersion, /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u, 'Expected a concrete package version');
   const local = process.env.LOCALAPPDATA;
   assert.ok(local, 'LOCALAPPDATA is required');
   const oldExe = argument('--old-exe') ?? path.join(local, 'Programs', 'NovelWriterDesktop', '小说编写器.exe');
@@ -69,7 +71,7 @@ async function main() {
   await fs.access(oldExe); await fs.access(newExe);
   const id = randomUUID();
   const fixture = path.join(local, 'NovelWriterUpgradeChecks', id);
-  const evidence = path.resolve('.artifacts', `packaged-upgrade-035-${id}`);
+  const evidence = path.resolve('.artifacts', `packaged-upgrade-${newVersion}-${id}`);
   await fs.mkdir(evidence, { recursive: true }); await fs.mkdir(fixture, { recursive: true });
   const runtime = path.join(fixture, 'runtime'), executable = path.join(runtime, '小说编写器.exe');
   const profile = path.join(fixture, 'profile'), isolatedLocal = path.join(fixture, 'local-app-data');
@@ -141,7 +143,7 @@ async function main() {
 
     // Runtime overlay preserves the old app-adjacent directory. This is deliberately not
     // described as executing the installer: its pre-uninstall backup hook is separate.
-    await copyRuntime(newExe, runtime); await launch('0.1.1-beta.2');
+    await copyRuntime(newExe, runtime); await launch(newVersion);
     const projects = await page.evaluate(() => window.writer.listProjects());
     assert.deepEqual(projects.map(item => item.id), [project.id]); await open();
     const stableLocation = await page.evaluate(projectId => window.writer.materialLocation(projectId), project.id);
@@ -171,7 +173,16 @@ async function main() {
     await page.getByTestId('material-sync-open').click();
     const panel = page.getByTestId('material-sync-panel'); await panel.getByTestId('material-sync-toggle').click();
     await panel.getByTestId('material-sync-run').click(); await panel.getByTestId('material-sync-result').waitFor();
-    await page.screenshot({ path: path.join(evidence, 'beta2-upgrade-sync.png') });
+    // Verify the newly packaged history UI without restoring or altering author data.
+    await panel.locator('.material-sync-history summary').click(); await panel.getByTestId('history-open').click();
+    const history = page.getByTestId('history-panel');
+    await history.getByTestId('history-version').first().click();
+    await history.locator('[data-testid="history-file"][data-path="创作笔记.md"]').click();
+    await history.locator('.material-history-side pre').filter({ hasText: world }).first().waitFor();
+    assert.equal(await history.getByTestId('history-archive').isDisabled(), false);
+    await page.screenshot({ path: path.join(evidence, `${newVersion}-history-preview.png`) });
+    await history.getByTestId('history-close').click();
+    await page.screenshot({ path: path.join(evidence, `${newVersion}-upgrade-sync.png`) });
     await panel.getByTestId('material-sync-close').click(); await exit();
     const transport = path.join(folder, '小说资料', '创作资料同步');
     for (const name of await files(transport)) {
@@ -181,14 +192,14 @@ async function main() {
       assert.ok(!bytes.includes(Buffer.from(modelName)), 'Model settings leaked into transport');
       assert.ok(!bytes.includes(Buffer.from(JSON.parse(modelsBefore.toString('utf8')).connections[0].encryptedKey)), 'Encrypted credential leaked into transport');
     }
-    await launch('0.1.1-beta.2'); await open();
+    await launch(newVersion); await open();
     assert.equal((await page.evaluate(() => window.writer.listProjects()))[0].id, project.id);
     await page.getByRole('button', { name: '世界观', exact: true }).click(); assert.equal(await page.locator('#project-note').inputValue(), world);
     assert.deepEqual(await fs.readFile(path.join(folder, chapter)), manuscriptBefore);
     assert.deepEqual(await fs.readFile(receiptFile), receiptBefore, 'A repeat startup must retain the existing successful migration receipt'); await exit();
     assert.deepEqual(errors, []);
-    await fs.writeFile(path.join(evidence, 'result.json'), JSON.stringify({ schemaVersion: 1, passed: true, scope: 'isolated packaged runtime overlay, not NSIS installer execution', oldVersion: '0.1.1-beta.1', newVersion: '0.1.1-beta.2', projectId: project.id,
-      checks: ['packaged app without NOVEL_WRITER_TEST_DATA', 'isolated existing profile', 'stable materials migration with retained source', 'immutable upgrade backup and repeat-start receipt', 'legacy named JSON byte-preserving migration', 'project identity and DOCX bytes', 'real U+3000 copied text', 'encrypted local model configuration survives', 'transport excludes credentials and settings', 'save-exit and restart'], manuscriptSha256: hash(manuscriptBefore), fixture }, null, 2));
+    await fs.writeFile(path.join(evidence, 'result.json'), JSON.stringify({ schemaVersion: 1, passed: true, scope: 'isolated packaged runtime overlay, not NSIS installer execution', oldVersion: '0.1.1-beta.1', newVersion, projectId: project.id,
+      checks: ['packaged app without NOVEL_WRITER_TEST_DATA', 'isolated existing profile', 'stable materials migration with retained source', 'immutable upgrade backup and repeat-start receipt', 'legacy named JSON byte-preserving migration', 'project identity and DOCX bytes', 'real U+3000 copied text', 'encrypted local model configuration survives', 'packaged history preview and archive action available', 'transport excludes credentials and settings', 'save-exit and restart'], manuscriptSha256: hash(manuscriptBefore), fixture }, null, 2));
     console.log(`Packaged upgrade simulation passed. Evidence: ${evidence}`);
   } finally { if (app) await app.evaluate(({ app: instance }) => instance.exit(0)).catch(() => {}); }
 }

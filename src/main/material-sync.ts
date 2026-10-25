@@ -2,7 +2,8 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
+import JSZip from 'jszip';
+import type { MaterialHistoryArchiveResult, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryPreview, MaterialHistoryRequest, MaterialHistorySnapshot, MaterialHistoryVersion, MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
 import type { Workspace } from './workspace';
 import { isSafeRelative } from './nas-backup';
 
@@ -18,11 +19,15 @@ const stateSchema = z.object({ schemaVersion: z.literal(1), projectId: z.uuid(),
 const pendingSchema = z.object({ schemaVersion: z.literal(1), projectId: z.uuid(), stage: z.string(), archive: z.uuid(), before: hashSchema, after: hashSchema }).strict();
 const requestSchema = z.object({ projectId: z.uuid(), fingerprint: hashSchema.optional(), remoteRevision: z.uuid().optional(),
   resolutions: z.array(z.object({ path: relativeSchema, source: z.enum(['local', 'remote']) }).strict()).max(MAX_FILES).optional() }).strict();
+const historyRequestSchema = z.object({ projectId: z.uuid(), source: z.enum(['local', 'transport']), id: z.uuid(), path: relativeSchema.optional(), fingerprint: hashSchema.optional() }).strict();
+const historyCopySchema = z.object({ projectId: z.uuid(), source: z.enum(['local', 'transport']), id: z.uuid(), fingerprint: hashSchema }).strict();
 type Entry = z.infer<typeof entrySchema>;
 type Manifest = z.infer<typeof manifestSchema>;
 type State = z.infer<typeof stateSchema>;
 interface Tree { entries: Entry[]; data: Map<string, Buffer>; fingerprint: string }
 interface Revision { manifest: Manifest; folder: string }
+interface HistoryContext { projectId: string; source: 'local' | 'transport'; id: string; book: string; bookIdentity: string;
+  current: Tree; history: Tree; fingerprint: string }
 interface Inspection { snapshot: MaterialSyncSnapshot; state: State; stateRaw: string | null; local: Tree; remote: Tree;
   revisions: Revision[]; leaves: Revision[]; selected?: Revision; canonical: string; versions: string; book: string }
 const absent = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -147,6 +152,13 @@ function preview(data: Buffer | undefined, relative: string) {
   if (!data || !/\.(?:md|txt|json)$/iu.test(relative)) return undefined;
   return data.toString('utf8').slice(0, 1600);
 }
+function historyText(data: Buffer | undefined, relative: string) {
+  if (!data || !/\.(?:md|txt|json)$/iu.test(relative)) return { text: undefined, truncated: false };
+  let text: string; try { text = new TextDecoder('utf-8', { fatal: true }).decode(data); } catch { return { text: undefined, truncated: false }; }
+  const truncated = text.length > 16000; let end = Math.min(text.length, 16000);
+  if (end < text.length && /[\uD800-\uDBFF]/u.test(text[end - 1]!)) end--;
+  return { text: text.slice(0, end), truncated };
+}
 
 /** Canonical author files remain in the application's fixed per-project directory.
  * Book-local revisions are immutable transport snapshots, never the live store. The
@@ -240,6 +252,148 @@ export class MaterialSyncService {
     return fromData(data);
   }
   private historyDirectory(projectId: string) { return path.join(this.materialsRoot, '同步历史', projectId); }
+  /** History reads intentionally do not inspect synchronization state or replay a
+   * pending canonical swap. They remain available while sharing is disabled. */
+  private async historyLocations(projectId: string) {
+    const locations = await this.bookLocations(projectId, false), stat = await fs.lstat(locations.book);
+    const meta = (await subDirectory(locations.book, META, false))!;
+    const projectRaw = await readRegular(meta, 'project.json', 1024 * 1024);
+    let project: any; try { project = JSON.parse(projectRaw.toString('utf8')); } catch { throw new Error('本书归属资料损坏'); }
+    if (project.schemaVersion !== 1 || project.id !== projectId) throw new Error('本书归属已变化，资料历史操作已停止');
+    const bookIdentity = hash(JSON.stringify({ book: locations.book, dev: stat.dev, ino: stat.ino, project: hash(projectRaw) }));
+    const base = await statOrNull(this.materialsRoot) ? await checkedDirectory(this.materialsRoot) : null;
+    const localHistory = base ? await subDirectory(base, `同步历史/${projectId}`, false) : null;
+    const canonical = base ? await subDirectory(base, projectId, false) : null;
+    return { ...locations, bookIdentity, localHistory, canonical };
+  }
+  history(projectId: string): Promise<MaterialHistorySnapshot> {
+    const id = z.uuid().parse(projectId); this.project(id);
+    return this.serial(async () => {
+      const locations = await this.historyLocations(id), versions: MaterialHistoryVersion[] = [];
+      if (locations.localHistory) {
+        const names = await fs.readdir(locations.localHistory);
+        if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个，请先人工归档历史');
+        for (const name of names) {
+          z.uuid().parse(name); const folder = path.join(locations.localHistory, name); await checkedDirectory(folder);
+          const stat = await fs.lstat(folder);
+          versions.push({ source: 'local', id: name, createdAt: stat.mtime.toISOString(), files: null, bytes: null });
+        }
+      }
+      for (const revision of await this.readRevisions(locations.versions, id)) {
+        versions.push({ source: 'transport', id: revision.manifest.revisionId, createdAt: revision.manifest.createdAt,
+          files: revision.manifest.entries.length, bytes: revision.manifest.entries.reduce((sum, entry) => sum + entry.bytes, 0) });
+      }
+      versions.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.source.localeCompare(b.source) || a.id.localeCompare(b.id));
+      return { schemaVersion: 1, projectId: id, versions };
+    });
+  }
+  private async inspectHistory(request: MaterialHistoryRequest): Promise<HistoryContext> {
+    const locations = await this.historyLocations(request.projectId);
+    const current = locations.canonical ? await scanTree(locations.canonical, request.projectId) : emptyTree();
+    let history: Tree, manifestHash: string | null = null, folder: string;
+    if (request.source === 'local') {
+      if (!locations.localHistory) throw new Error('所选本机资料历史不存在，请刷新列表');
+      const names = await fs.readdir(locations.localHistory);
+      if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个，请先人工归档历史');
+      if (!names.includes(request.id)) throw new Error('所选本机资料历史不存在，请刷新列表');
+      folder = (await subDirectory(locations.localHistory, request.id, false))!;
+      if (!folder) throw new Error('所选本机资料历史不存在，请刷新列表');
+      history = await scanTree(folder, request.projectId);
+    } else {
+      const revisions = await this.readRevisions(locations.versions, request.projectId), revision = revisions.find(value => value.manifest.revisionId === request.id);
+      if (!revision) throw new Error('所选随书资料版本不存在或尚未传输完整，请刷新列表');
+      folder = revision.folder;
+      const raw = await readRegular(folder, 'manifest.json', 2 * 1024 * 1024);
+      let latest: Manifest; try { latest = manifestSchema.parse(JSON.parse(raw.toString('utf8'))); } catch { throw new Error('资料历史清单损坏或版本不受支持'); }
+      if (JSON.stringify(latest) !== JSON.stringify(revision.manifest)) throw new Error('资料历史清单在读取期间变化，请重新预览');
+      manifestHash = hash(raw);
+      const declared = await this.readRevision(revision, request.projectId), files = await subDirectory(folder, 'files', false);
+      history = files ? await scanTree(files, request.projectId) : emptyTree();
+      if (declared.fingerprint !== history.fingerprint) throw new Error('资料历史完整目录与清单不匹配，请等待完整传输');
+      if (hash(await readRegular(folder, 'manifest.json', 2 * 1024 * 1024)) !== manifestHash) throw new Error('资料历史清单在读取期间变化，请重新预览');
+    }
+    await checkedDirectory(folder); const sourceStat = await fs.lstat(folder);
+    const fingerprint = hash(JSON.stringify({ projectId: request.projectId, source: request.source, id: request.id,
+      bookIdentity: locations.bookIdentity, folder, dev: sourceStat.dev, ino: sourceStat.ino, manifestHash,
+      current: current.entries, history: history.entries }));
+    if (request.fingerprint !== undefined && request.fingerprint !== fingerprint) throw new Error('资料历史或当前资料已变化，请重新预览后处理');
+    return { projectId: request.projectId, source: request.source, id: request.id, book: locations.book,
+      bookIdentity: locations.bookIdentity, current, history, fingerprint };
+  }
+  previewHistory(input: MaterialHistoryRequest): Promise<MaterialHistoryPreview> {
+    const request = historyRequestSchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      const context = await this.inspectHistory(request), current = new Map(context.current.entries.map(entry => [entry.path, entry])), history = new Map(context.history.entries.map(entry => [entry.path, entry]));
+      const files: MaterialHistoryFile[] = [...new Set([...current.keys(), ...history.keys()])].sort().map(relative => {
+        const left = current.get(relative), right = history.get(relative);
+        return { path: relative, currentHash: left?.sha256 ?? null, historyHash: right?.sha256 ?? null, currentBytes: left?.bytes ?? 0,
+          historyBytes: right?.bytes ?? 0, change: !left ? 'history-only' : !right ? 'current-only' : left.sha256 === right.sha256 ? 'unchanged' : 'changed' };
+      });
+      const result: MaterialHistoryPreview = { schemaVersion: 1, projectId: request.projectId, source: request.source, id: request.id, fingerprint: context.fingerprint, files };
+      if (request.path !== undefined) {
+        if (!current.has(request.path) && !history.has(request.path)) throw new Error('所选资料历史文件不存在，请刷新预览');
+        const left = historyText(context.current.data.get(request.path), request.path), right = historyText(context.history.data.get(request.path), request.path);
+        result.detail = { path: request.path, currentText: left.text, historyText: right.text, currentTruncated: left.truncated, historyTruncated: right.truncated };
+      }
+      return result;
+    });
+  }
+  private async assertHistoryUnchanged(context: HistoryContext) {
+    const latest = await this.inspectHistory({ projectId: context.projectId, source: context.source, id: context.id, fingerprint: context.fingerprint });
+    if (latest.book !== context.book || latest.bookIdentity !== context.bookIdentity) throw new Error('小说归属或目录位置已变化，历史副本暂存已保留');
+  }
+  copyHistory(input: MaterialHistoryCopyRequest): Promise<MaterialHistoryCopyResult> {
+    const request = historyCopySchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      const context = await this.inspectHistory(request), base = (await subDirectory(context.book, `${META}/资料历史恢复`, true))!;
+      const copyId = randomUUID(), directory = path.join(base, copyId); await fs.mkdir(directory);
+      const files = (await subDirectory(directory, 'files', true))!; await this.writeFiles(files, context.history);
+      if ((await scanTree(files, request.projectId)).fingerprint !== context.history.fingerprint) throw new Error('资料历史副本暂存发生变化，未发布完成清单');
+      await this.assertHistoryUnchanged(context);
+      const latestBase = await subDirectory(context.book, `${META}/资料历史恢复`, false), latestDirectory = latestBase ? await subDirectory(latestBase, copyId, false) : null;
+      if (latestBase !== base || latestDirectory !== directory) throw new Error('资料历史恢复目录已变化，未发布完成清单');
+      if ((await scanTree(files, request.projectId)).fingerprint !== context.history.fingerprint) throw new Error('资料历史副本暂存发生变化，未发布完成清单');
+      await this.assertHistoryUnchanged(context); await checkedDirectory(directory);
+      const manifest = { schemaVersion: 1, projectId: request.projectId, kind: 'material-history-copy', source: request.source, id: request.id,
+        copyId, createdAt: new Date().toISOString(), fingerprint: context.fingerprint, entries: context.history.entries };
+      await fs.writeFile(path.join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), { flag: 'wx' });
+      return { schemaVersion: 1, projectId: request.projectId, source: request.source, id: request.id, directory,
+        files: context.history.entries.length, bytes: context.history.entries.reduce((sum, entry) => sum + entry.bytes, 0) };
+    });
+  }
+  /** A portable compressed snapshot, with a separate completion record written last.
+   * No historical parent or current author file is deleted to make this archive. */
+  archiveHistory(input: MaterialHistoryCopyRequest): Promise<MaterialHistoryArchiveResult> {
+    const request = historyCopySchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      const context = await this.inspectHistory(request);
+      const bytes = context.history.entries.reduce((sum, entry) => sum + entry.bytes, 0);
+      if (bytes > 64 * 1024 * 1024) throw new Error('历史ZIP原始内容超过64 MiB，请使用“恢复为新副本”保留完整文件');
+      const zip = new JSZip(), archiveId = randomUUID();
+      const manifest = { schemaVersion: 1, kind: 'material-history-archive', projectId: request.projectId,
+        source: request.source, id: request.id, archiveId, createdAt: new Date().toISOString(), entries: context.history.entries };
+      for (const entry of context.history.entries) zip.file(`files/${entry.path}`, context.history.data.get(entry.path)!);
+      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+      const archive = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+      if (archive.length > 80 * 1024 * 1024) throw new Error('历史ZIP超过80 MiB，请使用“恢复为新副本”');
+      await this.assertHistoryUnchanged(context);
+      const base = (await subDirectory(context.book, `${META}/资料历史归档`, true))!;
+      const directory = path.join(base, archiveId); await fs.mkdir(directory);
+      const file = path.join(directory, '历史资料.zip');
+      await checkedDirectory(directory); await fs.writeFile(file, archive, { flag: 'wx' });
+      const sha256 = hash(archive);
+      if (hash(await readRegular(directory, '历史资料.zip', 80 * 1024 * 1024)) !== sha256) throw new Error('历史归档暂存已变化，未发布完成清单');
+      await this.assertHistoryUnchanged(context);
+      const latestBase = await subDirectory(context.book, `${META}/资料历史归档`, false);
+      const latestDirectory = latestBase ? await subDirectory(latestBase, archiveId, false) : null;
+      if (latestBase !== base || latestDirectory !== directory) throw new Error('历史归档目录已变化，未发布完成清单');
+      if (hash(await readRegular(directory, '历史资料.zip', 80 * 1024 * 1024)) !== sha256) throw new Error('历史归档暂存已变化，未发布完成清单');
+      await this.assertHistoryUnchanged(context); await checkedDirectory(directory);
+      await fs.writeFile(path.join(directory, '完成清单.json'), JSON.stringify({ ...manifest, file: '历史资料.zip', bytes, archiveBytes: archive.length, sha256 }, null, 2), { flag: 'wx' });
+      return { schemaVersion: 1, projectId: request.projectId, source: request.source, id: request.id,
+        directory, file, files: context.history.entries.length, bytes, archiveBytes: archive.length, sha256 };
+    });
+  }
   private disabled(projectId: string, state: State): MaterialSyncSnapshot {
     return { schemaVersion: 1, projectId, enabled: false, status: 'disabled', fingerprint: hash(JSON.stringify(state)), selectedRemoteRevision: null,
       remoteRevisions: [], files: [], localFiles: 0, remoteFiles: 0, message: '创作资料同步未开启；正式资料仍保存在本机固定目录。', historyDirectory: this.historyDirectory(projectId), lastSyncedAt: state.lastSyncedAt };
