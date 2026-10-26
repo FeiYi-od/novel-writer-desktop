@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Workspace } from '../src/main/workspace';
 import { MacroStore } from '../src/main/macros';
+import { RegexPreviewRunner } from '../src/main/regex-preview';
+import { regexWorkerFactory } from './regex-worker-fixture';
 
 async function fixture(t: TestContext) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-macros-'));
@@ -13,7 +15,7 @@ async function fixture(t: TestContext) {
   const book = path.join(root, '甲'); await fs.mkdir(book);
   const project = await workspace.attach(book);
   t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
-  return { root, project, store: new MacroStore(workspace) };
+  return { root, project, store: new MacroStore(workspace, new RegexPreviewRunner(await regexWorkerFactory())) };
 }
 
 test('正则脚本：导入 SillyTavern 导出格式并在预览时套用', async t => {

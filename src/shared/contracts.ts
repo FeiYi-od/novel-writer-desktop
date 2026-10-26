@@ -1,5 +1,6 @@
 import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult, MaterialHistoryImportRequest, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportResult } from './material-sync';
 import type { DocxStructureSnapshot, DocxStructureAction, DocxStructureEditResult } from './docx-structure';
+import type { MacroContext, MacroPreviewResult, MacroImportResult } from './macros';
 
 export interface RichNode {
   type: string;
@@ -192,8 +193,9 @@ export interface WriterApi {
   readStyleHistory(projectId: string): Promise<StyleHistorySnapshotView>;
   syncStyleHistory(projectId: string): Promise<StyleHistorySnapshotView>;
   readMacroScripts(projectId: string): Promise<{ findRegex: string; replaceString: string; disabled?: boolean; flags?: string; trimStrings?: string[] }[]>;
-  previewMacros(projectId: string, text: string, context: { characterName?: string; userName?: string; lastMessage?: string }): Promise<{ expanded: string; applied: string; scripts: number }>;
-  importMacroScripts(projectId: string): Promise<{ count: number } | null>;
+  previewMacros(projectId: string, text: string, context: MacroContext, requestId?: string): Promise<MacroPreviewResult>;
+  cancelMacroPreview(projectId: string, requestId: string): Promise<boolean>;
+  importMacroScripts(projectId: string): Promise<MacroImportResult | null>;
   listWorldBooks(projectId: string): Promise<{ name: string; entries: number; keys: number; error?: string }[]>;
   importWorldBook(projectId: string): Promise<{ name: string; entries: number } | null>;
   removeWorldBook(projectId: string, name: string): Promise<boolean>;

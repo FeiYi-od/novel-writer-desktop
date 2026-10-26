@@ -22,6 +22,8 @@ import { CharacterLibrary } from './character-library';
 import { WorldInfoStore } from './world-info';
 import { isStorageHost, MAX_STORAGE_TARGETS } from '../core/storage-targets';
 import { MacroStore } from './macros';
+import { RegexPreviewRunner } from './regex-preview';
+import createRegexWorker from './regex-preview-worker?nodeWorker';
 import { setUsageSink } from './ai-provider';
 import { createStyleTrial } from './style-trial-run';
 import { BlueprintStore } from './blueprint';
@@ -113,7 +115,7 @@ async function bootstrap() {
   const characterLibrary = new CharacterLibrary(characters);
   const discussion = new DiscussionStore(workspace);
   const worldInfo = new WorldInfoStore(workspace);
-  const macros = new MacroStore(workspace);
+  const macros = new MacroStore(workspace, new RegexPreviewRunner(createRegexWorker), action => materialGate.shared(action));
   const keyCodec = {
     encrypt: (value: string) => { if (!safeStorage.isEncryptionAvailable()) throw new Error('系统密钥加密不可用，未保存密钥'); return safeStorage.encryptString(value); },
     decrypt: (value: Buffer) => safeStorage.decryptString(value)
@@ -358,12 +360,28 @@ async function bootstrap() {
     'characters:read': (id: string) => characters.read(id),
     'characters:save': (id: string, edit: CharacterEdit, hash: string) => characters.save(id, edit, hash),
     'macros:read': (id: string) => macros.read(id),
-    'macros:preview': (id: string, text: string, context: { characterName?: string; userName?: string; lastMessage?: string }) => macros.preview(id, text, context),
+    'macros:preview': (id: string, text: string, context: { characterName?: string; userName?: string; lastMessage?: string }, requestId?: string) => macros.preview(id, text, context, requestId),
+    'macros:cancel-preview': (id: string, requestId: string) => macros.cancel(id, requestId),
     'macros:import': async (id: string) => {
+      workspace.getProject(id);
       const picked = await dialog.showOpenDialog({ title: '导入 SillyTavern 正则脚本', filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['openFile'] });
       if (picked.canceled || !picked.filePaths[0]) return null;
-      const scripts = await macros.import(id, JSON.parse(await fs.readFile(picked.filePaths[0], 'utf8')));
-      return { count: scripts.length };
+      const file = picked.filePaths[0], stat = await fs.lstat(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024 || path.extname(file).toLowerCase() !== '.json') throw new Error('正则导入只支持1 MiB以内的普通JSON文件');
+      const handle = await fs.open(file, 'r'); let bytes: Buffer;
+      try {
+        const before = await handle.stat();
+        if (before.dev !== stat.dev || before.ino !== stat.ino || !before.isFile()) throw new Error('正则导入文件已变化');
+        const chunks: Buffer[] = []; let total = 0;
+        for await (const chunk of handle.createReadStream({ autoClose: false })) {
+          total += chunk.length; if (total > 1024 * 1024) throw new Error('正则导入超过1 MiB'); chunks.push(Buffer.from(chunk));
+        }
+        const after = await handle.stat(), latest = await fs.lstat(file);
+        if (total !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs
+          || latest.isSymbolicLink() || latest.dev !== stat.dev || latest.ino !== stat.ino || latest.size !== after.size || latest.mtimeMs !== after.mtimeMs) throw new Error('正则导入文件读取期间已变化');
+        bytes = Buffer.concat(chunks);
+      } finally { await handle.close(); }
+      return macros.importBytes(id, bytes);
     },
     'world:list': (id: string) => worldInfo.list(id),
     'world:remove': (id: string, name: string) => worldInfo.remove(id, name),
@@ -614,12 +632,15 @@ async function bootstrap() {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
-      if (exitToken && /^(ai:(start|test|models|review-batch)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive|history-import-open|history-import-copy))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && /^(ai:(start|test|models|review-batch)|macros:(preview|import)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive|history-import-open|history-import-copy))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
       const readOnly = /^(models:auxiliary|ai:(connections|tasks)|detector:(connections|reports|usage|batch-state)|memory:batch-state|knowledge:index-status|drafts:read|projects:list|chapters:(list|read|order|conflicts)|notes:read|book:read|characters:read|planning:read|memory:read|materials:location|recovery:(list|read))$/.test(channel);
       const tracked = !channel.startsWith('app:') && !readOnly;
       if (tracked) activeRequests++;
       try {
         if (channel.startsWith('app:')) return await handler(...args);
+        // Preview reserves its cancellation session before entering the shared gate.
+        // Cancellation only aborts that in-memory session and must bypass queued swaps.
+        if (channel === 'macros:preview' || channel === 'macros:cancel-preview') return await handler(...args);
         if (channel.startsWith('materials-sync:')) {
           // All pre-existing IPC, including reads that create missing Markdown files,
           // must finish before exchanging the canonical directory. Status may
