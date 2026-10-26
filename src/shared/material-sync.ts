@@ -45,6 +45,24 @@ export interface MaterialHistorySnapshot {
   projectId: string;
   versions: MaterialHistoryVersion[];
 }
+export const MATERIAL_HISTORY_LIMIT = 1000;
+export const MATERIAL_HISTORY_WARNING_AT = 800;
+/** Root directory entries, including incomplete snapshots; not verified versions or disk usage. */
+export interface MaterialHistoryCapacity {
+  entries: number;
+  exact: boolean;
+  remaining: number;
+  level: 'normal' | 'warning' | 'full' | 'over-limit';
+}
+export interface MaterialHistoryCapacitySnapshot {
+  schemaVersion: 1;
+  projectId: string;
+  checkedAt: string;
+  limit: number;
+  warningAt: number;
+  local: MaterialHistoryCapacity;
+  transport: MaterialHistoryCapacity;
+}
 export interface MaterialHistoryRequest {
   projectId: string;
   source: MaterialHistorySource;

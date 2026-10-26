@@ -297,6 +297,7 @@ async function bootstrap() {
     'materials-sync:configure': (id: string, enabled: boolean) => materialSync.configure(id, enabled),
     'materials-sync:synchronize': request => materialSync.synchronize(request),
     'materials-sync:history': (id: string) => materialSync.history(id),
+    'materials-sync:history-capacity': (id: string) => materialSync.capacity(id),
     'materials-sync:history-preview': request => materialSync.previewHistory(request),
     'materials-sync:history-copy': request => materialSync.copyHistory(request),
     'materials-sync:history-archive': request => materialSync.archiveHistory(request),
@@ -641,6 +642,8 @@ async function bootstrap() {
         // Preview reserves its cancellation session before entering the shared gate.
         // Cancellation only aborts that in-memory session and must bypass queued swaps.
         if (channel === 'macros:preview' || channel === 'macros:cancel-preview') return await handler(...args);
+        // Capacity only counts directory entries; it never recovers a pending swap or writes metadata.
+        if (channel === 'materials-sync:history-capacity') return await materialGate.shared(() => handler(...args));
         if (channel.startsWith('materials-sync:')) {
           // All pre-existing IPC, including reads that create missing Markdown files,
           // must finish before exchanging the canonical directory. Status may

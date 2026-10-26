@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MaterialHistoryArchiveResult, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryPreview, MaterialHistorySnapshot, MaterialHistoryVersion } from '../../shared/material-sync';
+import type { MaterialHistoryArchiveResult, MaterialHistoryCapacitySnapshot, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryPreview, MaterialHistorySnapshot, MaterialHistoryVersion } from '../../shared/material-sync';
 import { MaterialHistoryImportPanel } from './MaterialHistoryImportPanel';
 import './material-history.css';
 
@@ -19,6 +19,18 @@ const key = (version: Pick<MaterialHistoryVersion, 'source' | 'id'>) => `${versi
 const changeNames: Record<MaterialHistoryFile['change'], string> = {
   unchanged: '内容相同', 'history-only': '仅历史中存在', 'current-only': '仅当前存在', changed: '内容不同'
 };
+const capacityNames = { normal: '名额充足', warning: '接近上限', full: '已达上限', 'over-limit': '已超过上限' };
+function verifyCapacity(value: MaterialHistoryCapacitySnapshot, projectId: string) {
+  if (!value || value.schemaVersion !== 1 || value.projectId !== projectId || value.limit !== 1000 || value.warningAt !== 800
+    || typeof value.checkedAt !== 'string' || Number.isNaN(Date.parse(value.checkedAt))) throw new Error('历史容量的小说、版本或统计参数不匹配，未在本页应用');
+  for (const source of ['local', 'transport'] as const) {
+    const item = value[source];
+    if (!item || !Number.isSafeInteger(item.entries) || item.entries < 0 || item.entries > value.limit + 1 || typeof item.exact !== 'boolean'
+      || item.exact !== (item.entries <= value.limit) || item.remaining !== Math.max(0, value.limit - item.entries)
+      || item.level !== (item.entries > value.limit ? 'over-limit' : item.entries === value.limit ? 'full' : item.entries >= value.warningAt ? 'warning' : 'normal'))
+      throw new Error('历史容量统计不完整或边界不匹配，未在本页应用');
+  }
+}
 
 function HistorySide({ file, side, preview, loading }: { file: MaterialHistoryFile; side: 'current' | 'history'; preview: MaterialHistoryPreview; loading: boolean }) {
   const hash = side === 'current' ? file.currentHash : file.historyHash;
@@ -37,6 +49,8 @@ function HistorySide({ file, side, preview, loading }: { file: MaterialHistoryFi
 /** Read-only comparisons and a separate recovery copy; no current material is replaced. */
 export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBeforeCopy, onBusy }: MaterialHistoryPanelProps) {
   const [snapshot, setSnapshot] = useState<MaterialHistorySnapshot | null>(null);
+  const [capacity, setCapacity] = useState<MaterialHistoryCapacitySnapshot | null>(null);
+  const [capacityError, setCapacityError] = useState('');
   const [selected, setSelected] = useState<MaterialHistoryVersion | null>(null);
   const [preview, setPreview] = useState<MaterialHistoryPreview | null>(null);
   const [path, setPath] = useState('');
@@ -52,9 +66,25 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
   const panelRef = useRef<HTMLElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const valid = (id: string, ticket: number) => mounted.current && currentProject.current === id && request.current === ticket;
-  const verify = (value: { projectId: string; source?: string; id?: string }, id: string, version?: MaterialHistoryVersion) => {
-    if (value.projectId !== id || (version && (value.source !== version.source || value.id !== version.id)))
+  const verify = (value: { schemaVersion: number; projectId: string; source?: string; id?: string }, id: string, version?: MaterialHistoryVersion) => {
+    if (!value || value.schemaVersion !== 1 || value.projectId !== id || (version && (value.source !== version.source || value.id !== version.id)))
       throw new Error('历史结果的小说或版本标识不匹配，未在本页应用');
+  };
+  const load = async (id: string, ticket: number) => {
+    const [historyResult, capacityResult] = await Promise.allSettled([
+      window.writer.materialHistory(id), window.writer.materialHistoryCapacity(id)
+    ]);
+    if (!valid(id, ticket)) return;
+    if (historyResult.status === 'fulfilled') {
+      try {
+        verify(historyResult.value, id); setSnapshot(historyResult.value);
+        setSelected(null); setPreview(null); setPath(''); setResult(null); setArchiveResult(null);
+      } catch (e) { setError(errorText(e)); }
+    } else setError(errorText(historyResult.reason));
+    if (capacityResult.status === 'fulfilled') {
+      try { verifyCapacity(capacityResult.value, id); setCapacity(capacityResult.value); setCapacityError(''); }
+      catch (e) { setCapacity(null); setCapacityError(errorText(e)); }
+    } else { setCapacity(null); setCapacityError(errorText(capacityResult.reason)); }
   };
   const operate = async (action: (id: string, ticket: number) => Promise<void>) => {
     if (running.current || importOpen) return;
@@ -77,20 +107,15 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
   useEffect(() => {
     mounted.current = true;
     const id = projectId; const ticket = ++request.current;
-    running.current = true; setBusy(true); setSnapshot(null); setSelected(null); setPreview(null); setPath(''); setResult(null); setArchiveResult(null); setError(''); setNotice('');
-    void window.writer.materialHistory(id).then(value => {
-      if (!valid(id, ticket)) return;
-      verify(value, id); setSnapshot(value);
-    }).catch(e => { if (valid(id, ticket)) setError(errorText(e)); }).finally(() => {
+    running.current = true; setBusy(true); setSnapshot(null); setCapacity(null); setCapacityError(''); setSelected(null); setPreview(null); setPath(''); setResult(null); setArchiveResult(null); setError(''); setNotice('');
+    void load(id, ticket).catch(e => { if (valid(id, ticket)) setError(errorText(e)); }).finally(() => {
       if (valid(id, ticket)) { running.current = false; setBusy(false); }
     });
     return () => { mounted.current = false; request.current++; running.current = false; };
   }, [projectId]);
 
   const refresh = () => void operate(async (id, ticket) => {
-    const value = await window.writer.materialHistory(id);
-    if (!valid(id, ticket)) return;
-    verify(value, id); setSnapshot(value); setSelected(null); setPreview(null); setPath(''); setResult(null); setArchiveResult(null);
+    setCapacityError(''); await load(id, ticket);
   });
   const open = (version: MaterialHistoryVersion) => {
     if (running.current) return;
@@ -162,6 +187,19 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
   }}>
     <header><div><h2 id="material-history-title">历史版本与资料找回</h2><p>{title}</p></div><button type="button" data-testid="history-close" aria-label="关闭资料历史" disabled={busy} onClick={close}>关闭</button></header>
     <p className="material-history-help">选择历史版本后可只读对照当前资料。“恢复为新副本”会单独保存所选历史的完整文件，不替换当前设定、不改变同步设置，也不会自动确认为正史。外层尚未执行的同步选择会保留。</p>
+    <section className="material-history-capacity" data-testid="history-capacity" aria-label="历史目录容量">
+      <header><h3>历史目录容量</h3>{capacity && <span>核对于 {date(capacity.checkedAt)}</span>}</header>
+      {capacityError && <p role="alert" data-testid="history-capacity-error">{capacityError}。容量暂未核对；历史列表与原件保留。</p>}
+      {capacity ? <div className="material-history-capacity-grid">{(['local', 'transport'] as const).map(source => {
+        const item = capacity[source];
+        return <section key={source} data-testid={`history-capacity-${source}`} data-level={item.level}>
+          <div><strong>{source === 'local' ? '本机替换前归档' : '书内传输目录'}</strong><span>{capacityNames[item.level]}</span></div>
+          <p><b>{item.exact ? '' : '至少 '}{item.entries.toLocaleString()}</b> / {capacity.limit.toLocaleString()} 个条目<span>剩余 {item.remaining.toLocaleString()} 个</span></p>
+          <progress max={capacity.limit} value={Math.min(item.entries, capacity.limit)} aria-label={`${source === 'local' ? '本机归档' : '书内传输'}条目占用`} />
+        </section>;
+      })}</div> : !capacityError && <p>{busy ? '正在读取目录容量…' : '容量尚未核对'}</p>}
+      <p className="material-history-help">统计目录条目，包含尚未完成的传输目录；不等于已核验版本数或磁盘占用。每侧上限1,000个，达到800个时提醒。打包ZIP不会释放名额；请保留完整历史及父版本，勿删除目录绕过上限。刷新历史列表可重新核对。</p>
+    </section>
     <div ref={messageRef}>{error && <div role="alert" className="error" data-testid="history-error">{error}<span>当前资料和历史原件均保留。版本发生变化时，请刷新列表并重新打开后再恢复。</span></div>}
     {notice && <p role="status" className="material-history-notice">{notice}</p>}
     {result && <section className="material-history-result" data-testid="history-result" role="status"><strong>已恢复为新副本</strong><p>{result.files} 个文件 · {size(result.bytes)}</p><code>{result.directory}</code><button type="button" data-testid="history-copy-directory" disabled={busy} onClick={copyDirectory}>复制新副本目录</button><p>当前设定未变。请核对副本内容，再决定是否手动采纳。</p></section>}

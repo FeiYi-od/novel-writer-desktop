@@ -3,13 +3,14 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import JSZip from 'jszip';
-import type { MaterialHistoryArchiveResult, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportRequest, MaterialHistoryImportResult, MaterialHistoryPreview, MaterialHistoryRequest, MaterialHistorySnapshot, MaterialHistoryVersion, MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
+import type { MaterialHistoryArchiveResult, MaterialHistoryCapacity, MaterialHistoryCapacitySnapshot, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportRequest, MaterialHistoryImportResult, MaterialHistoryPreview, MaterialHistoryRequest, MaterialHistorySnapshot, MaterialHistoryVersion, MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
+import { MATERIAL_HISTORY_LIMIT, MATERIAL_HISTORY_WARNING_AT } from '../shared/material-sync';
 import type { Workspace } from './workspace';
 import { isSafeRelative } from './nas-backup';
 import { parseMaterialHistoryArchive } from './material-history-zip';
 
 const META = '小说资料', TRANSPORT = '创作资料同步', VERSIONS = '版本';
-const MAX_FILE = 32 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024, MAX_FILES = 10000, MAX_REVISIONS = 1000;
+const MAX_FILE = 32 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024, MAX_FILES = 10000, MAX_REVISIONS = MATERIAL_HISTORY_LIMIT;
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const relativeSchema = z.string().refine(value => isSafeRelative(value) && value.split('/').every(part => !part.startsWith('.')), '资料同步路径不安全');
 const entrySchema = z.object({ path: relativeSchema, bytes: z.number().int().min(0).max(MAX_FILE), sha256: hashSchema }).strict();
@@ -53,6 +54,26 @@ async function checkedDirectory(directory: string) {
   const stat = await fs.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('资料同步目录不是普通目录或包含链接，原资料已保留');
   return fs.realpath(directory);
+}
+/** Counts names only and stops at limit+1. No child, manifest, state or pending journal is read. */
+async function historyCapacity(directory: string | null): Promise<MaterialHistoryCapacity> {
+  let entries = 0, exact = true;
+  if (directory) {
+    const before = await statOrNull(directory);
+    if (before) {
+      await checkedDirectory(directory);
+      const stream = await fs.opendir(directory);
+      for await (const _entry of stream) {
+        if (++entries > MAX_REVISIONS) { exact = false; break; }
+      }
+      const after = await fs.lstat(directory);
+      await checkedDirectory(directory);
+      if (before.dev !== after.dev || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
+        throw new Error('资料历史目录在容量核对期间变化，请刷新后重试');
+    }
+  }
+  return { entries, exact, remaining: Math.max(0, MAX_REVISIONS - entries),
+    level: !exact ? 'over-limit' : entries === MAX_REVISIONS ? 'full' : entries >= MATERIAL_HISTORY_WARNING_AT ? 'warning' : 'normal' };
 }
 async function rootDirectory(directory: string) {
   if (!await statOrNull(directory)) await fs.mkdir(directory, { recursive: true });
@@ -230,7 +251,7 @@ export class MaterialSyncService {
   private async readRevisions(versions: string, projectId: string): Promise<Revision[]> {
     if (!await statOrNull(versions)) return [];
     await checkedDirectory(versions); const revisions: Revision[] = []; const names = await fs.readdir(versions);
-    if (names.length > MAX_REVISIONS) throw new Error('资料同步版本超过1000个，请先归档历史');
+    if (names.length > MAX_REVISIONS) throw new Error('资料同步目录超过1000个条目，已停止读取；请保留完整历史与父版本，ZIP留档不会释放版本名额');
     for (const name of names) {
       z.uuid().parse(name); const folder = path.join(versions, name); await checkedDirectory(folder);
       const file = path.join(folder, 'manifest.json'); if (!await statOrNull(file)) continue; // A partial upload has no committed manifest.
@@ -281,7 +302,7 @@ export class MaterialSyncService {
       const locations = await this.historyLocations(id), versions: MaterialHistoryVersion[] = [];
       if (locations.localHistory) {
         const names = await fs.readdir(locations.localHistory);
-        if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个，请先人工归档历史');
+        if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个条目，已停止读取；请保留完整历史，ZIP留档不会释放名额');
         for (const name of names) {
           z.uuid().parse(name); const folder = path.join(locations.localHistory, name); await checkedDirectory(folder);
           const stat = await fs.lstat(folder);
@@ -296,6 +317,18 @@ export class MaterialSyncService {
       return { schemaVersion: 1, projectId: id, versions };
     });
   }
+  /** Advisory read only: available even when history listing exceeds its safety limit. */
+  capacity(projectId: string): Promise<MaterialHistoryCapacitySnapshot> {
+    const id = z.uuid().parse(projectId); this.project(id);
+    return this.serial(async () => {
+      const locations = await this.historyLocations(id);
+      const local = await historyCapacity(locations.localHistory), transport = await historyCapacity(locations.versions);
+      if ((await this.historyLocations(id)).bookIdentity !== locations.bookIdentity)
+        throw new Error('本书归属在容量核对期间变化，未返回历史容量');
+      return { schemaVersion: 1, projectId: id, checkedAt: new Date().toISOString(), limit: MAX_REVISIONS,
+        warningAt: MATERIAL_HISTORY_WARNING_AT, local, transport };
+    });
+  }
   private async inspectHistory(request: MaterialHistoryRequest): Promise<HistoryContext> {
     const locations = await this.historyLocations(request.projectId);
     const current = locations.canonical ? await scanTree(locations.canonical, request.projectId) : emptyTree();
@@ -303,7 +336,7 @@ export class MaterialSyncService {
     if (request.source === 'local') {
       if (!locations.localHistory) throw new Error('所选本机资料历史不存在，请刷新列表');
       const names = await fs.readdir(locations.localHistory);
-      if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个，请先人工归档历史');
+      if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个条目，已停止读取；请保留完整历史，ZIP留档不会释放名额');
       if (!names.includes(request.id)) throw new Error('所选本机资料历史不存在，请刷新列表');
       folder = (await subDirectory(locations.localHistory, request.id, false))!;
       if (!folder) throw new Error('所选本机资料历史不存在，请刷新列表');
@@ -579,9 +612,20 @@ export class MaterialSyncService {
       await fs.writeFile(path.join(directory, ...entry.path.split('/')), tree.data.get(entry.path)!, { flag: 'wx' });
     }
   }
+  private async requireHistorySlot(directory: string | null, label: string) {
+    const capacity = await historyCapacity(directory);
+    if (capacity.entries >= MAX_REVISIONS) throw new Error(`${label}容量已满（${capacity.exact ? '' : '至少'}${capacity.entries}/1000个目录条目），未新增历史；请保留完整历史与父版本，ZIP留档不会释放名额`);
+  }
+  private async requireLocalHistorySlot(context: Inspection, merged: Tree) {
+    if (context.local.fingerprint === merged.fingerprint || !await statOrNull(context.canonical)) return;
+    const base = await checkedDirectory(this.materialsRoot);
+    const history = await subDirectory(base, `同步历史/${context.snapshot.projectId}`, false);
+    await this.requireHistorySlot(history, '本机资料历史');
+  }
   private async publishRevision(context: Inspection, tree: Tree) {
     const locations = await this.bookLocations(context.snapshot.projectId, true);
     if (locations.book !== context.book || locations.versions !== context.versions) throw new Error('小说目录位置已变化，原资料已保留');
+    await this.requireHistorySlot(locations.versions, '书内传输版本');
     const id = randomUUID(), folder = path.join(locations.versions, id); await fs.mkdir(folder);
     const files = (await subDirectory(folder, 'files', true))!; await this.writeFiles(files, tree);
     const manifest: Manifest = { schemaVersion: 1, projectId: context.snapshot.projectId, revisionId: id, createdAt: new Date().toISOString(), parents: context.leaves.map(item => item.manifest.revisionId).sort(), entries: tree.entries };
@@ -605,11 +649,13 @@ export class MaterialSyncService {
   private async replaceCanonical(context: Inspection, merged: Tree) {
     if (context.local.fingerprint === merged.fingerprint) return;
     const id = context.snapshot.projectId, base = await checkedDirectory(this.materialsRoot);
+    await this.requireLocalHistorySlot(context, merged);
     const stage = path.join(base, `sync-stage-${id}-${randomUUID()}`); await fs.mkdir(stage); await this.writeFiles(stage, merged);
     if ((await scanTree(stage, id)).fingerprint !== merged.fingerprint) throw new Error('本机资料同步暂存已变化，原件和暂存已保留');
     await this.assertUnchanged(context);
     const history = (await subDirectory(base, `同步历史/${id}`, true))!, archiveId = randomUUID(), archive = path.join(history, archiveId);
     await this.assertUnchanged(context);
+    await this.requireLocalHistorySlot(context, merged);
     const journal = path.join(path.dirname(await this.stateLocation(id)), `${id}-pending.json`);
     await fs.writeFile(journal, JSON.stringify({ schemaVersion: 1, projectId: id, stage: path.basename(stage), archive: archiveId, before: context.local.fingerprint, after: merged.fingerprint }), { flag: 'wx' });
     const hadCanonical = Boolean(await statOrNull(context.canonical));
@@ -648,6 +694,10 @@ export class MaterialSyncService {
       const merged = fromData(data); checkPaths(merged.entries);
       let revisionId = context.selected?.manifest.revisionId ?? null;
       const publish = context.leaves.length !== 1 || merged.fingerprint !== context.remote.fingerprint;
+      // Check both sides before creating a transport revision or a canonical staging tree.
+      // Incomplete uploads occupy the same bounded directory space as committed versions.
+      if (publish) await this.requireHistorySlot(context.versions, '书内传输版本');
+      await this.requireLocalHistorySlot(context, merged);
       if (publish) revisionId = await this.publishRevision(context, merged); else await this.assertUnchanged(context);
       await this.replaceCanonical(context, merged);
       await this.writeState(request.projectId, { schemaVersion: 1, projectId: request.projectId, enabled: context.state.enabled, base: Object.fromEntries(merged.entries.map(entry => [entry.path, entry.sha256])), lastRevision: revisionId, lastSyncedAt: new Date().toISOString() }, context.stateRaw);

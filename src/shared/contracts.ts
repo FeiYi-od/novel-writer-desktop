@@ -1,4 +1,4 @@
-import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult, MaterialHistoryImportRequest, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportResult } from './material-sync';
+import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryCapacitySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult, MaterialHistoryImportRequest, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportResult } from './material-sync';
 import type { DocxStructureSnapshot, DocxStructureAction, DocxStructureEditResult } from './docx-structure';
 import type { MacroContext, MacroPreviewResult, MacroImportResult } from './macros';
 
@@ -65,6 +65,7 @@ export interface WriterApi {
   configureMaterialSync(projectId: string, enabled: boolean): Promise<MaterialSyncSnapshot>;
   synchronizeMaterials(request: MaterialSyncRequest): Promise<MaterialSyncSnapshot>;
   materialHistory(projectId: string): Promise<MaterialHistorySnapshot>;
+  materialHistoryCapacity(projectId: string): Promise<MaterialHistoryCapacitySnapshot>;
   previewMaterialHistory(request: MaterialHistoryRequest): Promise<MaterialHistoryPreview>;
   copyMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryCopyResult>;
   archiveMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryArchiveResult>;

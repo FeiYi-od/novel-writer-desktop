@@ -61,6 +61,7 @@ const api: WriterApi = {
   configureMaterialSync: (id, enabled) => ipcRenderer.invoke('materials-sync:configure', id, enabled),
   synchronizeMaterials: request => ipcRenderer.invoke('materials-sync:synchronize', request),
   materialHistory: id => ipcRenderer.invoke('materials-sync:history', id),
+  materialHistoryCapacity: id => ipcRenderer.invoke('materials-sync:history-capacity', id),
   previewMaterialHistory: request => ipcRenderer.invoke('materials-sync:history-preview', request),
   copyMaterialHistory: request => ipcRenderer.invoke('materials-sync:history-copy', request),
   archiveMaterialHistory: request => ipcRenderer.invoke('materials-sync:history-archive', request),
