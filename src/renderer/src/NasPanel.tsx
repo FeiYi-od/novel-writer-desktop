@@ -20,13 +20,13 @@ export function NasPanel({ projectId, onClose }: { projectId?: string; onClose: 
   try { targetCount = parseStorageTargets(targets).length; } catch (e) { targetError = (e as Error).message; }
   const provider = STORAGE_PROVIDERS.find(item => item.id === providerId) ?? STORAGE_PROVIDERS[0];
   return <div className="modal-overlay"><section className="book-modal nas-modal" role="dialog" aria-modal="true" aria-label="NAS 连接检查">
-    <header><div><h2>NAS 与网盘目录</h2><p>通过 Windows 文件夹打开小说；文件同步由对应的同步客户端或映射挂载工具负责。这里不收集账号密码，也不预填任何设备地址。</p></div></header>
+    <header><div><h2>文件夹、备份与连接检查</h2><p>通过 Windows 文件夹打开小说；已配置的同步目录或映射盘可按文件夹使用。这里不收集账号密码，也不预填任何设备地址。</p></div></header>
     <section data-testid="storage-compatibility">
-      <h3>选择设备或网盘</h3>
-      <label>存储方式<select aria-label="存储方式" disabled={busy} value={providerId} onChange={e => setProviderId(e.target.value)}>{STORAGE_PROVIDERS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <h3>目录方式说明</h3>
+      <label>查看目录方式（外部工具）<select aria-label="存储方式" disabled={busy} value={providerId} onChange={e => setProviderId(e.target.value)}>{STORAGE_PROVIDERS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <p data-testid="storage-provider-guide">{provider.guide}</p>
-      <p className="notice">当前支持文件夹读写、外部变更检查、备份与恢复；未接入网盘账号直连 API，应用无法确认云端同步进度。两台设备轮流写作：本机保存 → 等待客户端同步完成 → 另一台再打开。</p>
-      <p className="notice">人物卡、世界观等固定“创作资料”目录也需要单独同步；仅同步正文文件夹不会自动同步这些资料。整书备份与 ZIP 导出包含本书资料，可用于完整迁移。</p>
+      <p className="notice">应用内 NAS / 网盘账户直连：未开放。本地文件夹、用户已配置的映射盘或同步目录可继续使用；实际传输及进度由外部客户端负责。两台设备轮流写作：本机保存 → 等待客户端同步完成 → 另一台再打开。</p>
+      <p className="notice">启用并完成本书“固定资料同步”后，人物卡、世界观等固定资料会生成随书传输快照。请完整传输小说文件夹，仅传 DOCX 不包含全部资料。整书备份与 ZIP 导出包含本书资料，可用于完整迁移。</p>
     </section>
     {error && <div role="alert" className="error">{error}</div>}
     {projectId && <section className="nas-progress">
@@ -86,8 +86,8 @@ export function NasPanel({ projectId, onClose }: { projectId?: string; onClose: 
       {backup && <div className="notice" role="status" data-testid="nas-backup-result">已备份 {backup.files} 个文件（{Math.round(backup.bytes / 1024)} KB）到 {backup.folder}，校验 {backup.verified ? '通过' : '失败'}（{backup.checked} 项）。</div>}
     </section>}
     <section className="nas-drill">
-      <h3>断网演练自检</h3>
-      <p>在临时目录里复现「同步客户端改回旧版本」与「映射盘掉线」，确认不会丢稿、不会覆盖远端；不会碰你正在写的小说。</p>
+      <h3>本机模拟自检</h3>
+      <p>在临时目录中模拟外部版本变化和目录不可用，检查本机原稿保护。此自检不进行真实断网或验证云端服务，也不使用正在写的小说。</p>
       <div className="actions"><button data-testid="nas-drill" disabled={busy} onClick={() => void run(async () => { setDrill(await window.writer.runOfflineDrill()); setHistory(await window.writer.drillHistory()); })}>开始自检</button></div>
       {drill && <table className="nas-table" data-testid="nas-drill-result"><thead><tr><th>场景</th><th>结果</th><th>说明</th></tr></thead><tbody>
         {drill.steps.map(step => <tr key={step.name}><td>{step.name}</td><td>{step.ok ? '通过' : '未通过'}</td><td>{step.detail}</td></tr>)}

@@ -37,6 +37,11 @@ async function main() {
       });
     }, folder);
     await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click();
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[data-testid="material-sync-open"]');
+      return button instanceof HTMLButtonElement && !button.disabled;
+    });
+    assert.equal(await page.getByTestId('nas-open').innerText(), '文件夹与备份…');
     await page.getByTestId('nas-open').click();
     const dialog = page.getByRole('dialog', { name: 'NAS 连接检查' });
     await dialog.waitFor();
@@ -50,7 +55,11 @@ async function main() {
     assert.match(await dialog.getByTestId('storage-provider-guide').innerText(), /普通上传或自动备份不等于双向同步/u);
     await provider.selectOption('xunlei');
     assert.match(await dialog.getByTestId('storage-provider-guide').innerText(), /没有内置迅雷云盘登录/u);
-    assert.match(await dialog.getByTestId('storage-compatibility').innerText(), /仅同步正文文件夹不会自动同步/u);
+    const guide = await dialog.getByTestId('storage-compatibility').innerText();
+    assert.match(guide, /应用内 NAS \/ 网盘账户直连：未开放/u);
+    assert.match(guide, /启用并完成本书“固定资料同步”/u);
+    assert.match(guide, /完整传输小说文件夹，仅传 DOCX 不包含全部资料/u);
+    assert.equal(await dialog.getByTestId('nas-backup').isEnabled(), true);
     assert.deepEqual(await app.evaluate(() => (globalThis as any).__storageProbeCalls), [], '选设备与打开面板不自动探测网络');
     const targets = dialog.getByLabel('NAS 目标', { exact: true });
     await targets.fill('nas.example.test:443\n\n[::1]:broken');

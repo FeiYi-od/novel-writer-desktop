@@ -473,7 +473,7 @@ export function App() {
         <button data-testid="discussion-open" disabled={!active || busy || autoSaving} onClick={() => { if (active) { void window.writer.aiConnections().then(snapshot => setConnections(snapshot.connections)); setDiscussionOpen(active.id); } }}>与模型讨论…</button>
         <button data-testid="connect-open" className="primary" onClick={() => setConnectOpen(true)}>接入 API…</button>
         <button data-testid="keys-open" onClick={() => setKeysOpen(true)}>密钥状态…</button>
-        <button data-testid="nas-open" onClick={() => setNasOpen(true)}>NAS 连接检查…</button>
+        <button data-testid="nas-open" onClick={() => setNasOpen(true)}>文件夹与备份…</button>
         <button data-testid="material-sync-open" disabled={!active || busy || autoSaving || materialSyncBusy} onClick={() => { if (active) setMaterialSyncProject(active.id); }}>固定资料同步…</button>
         <button data-testid="macro-open" disabled={!active || busy || autoSaving} title="展开酒馆宏并预览正则脚本效果" onClick={() => { if (active) setMacroOpen(active.id); }}>宏与正则…</button>
         <button data-testid="style-history-open" disabled={!active || busy || autoSaving || !activeBook?.value.styles.length} title={activeBook?.value.styles.length ? '查看文风规则版本与效果记录' : '先在文风研习室建立文风档案'} onClick={() => { if (active) setStyleHistoryOpen(active.id); }}>文风版本与效果…</button>
@@ -497,7 +497,7 @@ export function App() {
           if (!discard()) return;
           void run(async () => { if (active) { loadDocument(await window.writer.readChapter(active.id, chapter.path)); setMessage('已读取 DOCX 文件'); } });
         }}><span>▧</span>{chapter.name}</button>)}</div>
-        <div className="local-note"><span className="dot" />文件直接保存在所选目录<small>NAS 连接将在最后阶段接入</small></div>
+        <div className="local-note"><span className="dot" />文件直接保存在所选目录<small>NAS / 网盘账号直连：未开放</small></div>
       </aside>
       <main className="editor-area">
         <div className="document-header"><div><small>{active ? '当前小说 / 正文' : '欢迎回来'}</small><h1>{document?.path.split(/[\\/]/).at(-1) ?? '给故事一个开始'}</h1></div>

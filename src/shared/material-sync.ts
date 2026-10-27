@@ -63,6 +63,40 @@ export interface MaterialHistoryCapacitySnapshot {
   local: MaterialHistoryCapacity;
   transport: MaterialHistoryCapacity;
 }
+/** A verified, complete history set; no canonical content or synchronization state is included. */
+export interface MaterialHistoryDagPreview {
+  schemaVersion: 1;
+  projectId: string;
+  fingerprint: string;
+  transportVersions: number;
+  localArchives: number;
+  branches: number;
+  files: number;
+  blobs: number;
+  bytes: number;
+}
+export interface MaterialHistoryDagRequest { projectId: string; fingerprint: string }
+export interface MaterialHistoryDagArchiveResult extends MaterialHistoryDagPreview {
+  archiveId: string;
+  directory: string;
+  file: string;
+  archiveBytes: number;
+  sha256: string;
+}
+export interface MaterialHistoryDagImportRequest { projectId: string; token: string; fingerprint: string }
+/** Main-process ticket authorizes one inspected archive, not an arbitrary renderer path. */
+export interface MaterialHistoryDagImportPreview extends MaterialHistoryDagPreview {
+  token: string;
+  archiveId: string;
+  name: string;
+  archiveBytes: number;
+  sha256: string;
+  directories: number;
+}
+export interface MaterialHistoryDagImportResult extends MaterialHistoryDagImportPreview {
+  copyId: string;
+  directory: string;
+}
 export interface MaterialHistoryRequest {
   projectId: string;
   source: MaterialHistorySource;

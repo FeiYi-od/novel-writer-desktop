@@ -298,6 +298,17 @@ async function bootstrap() {
     'materials-sync:synchronize': request => materialSync.synchronize(request),
     'materials-sync:history': (id: string) => materialSync.history(id),
     'materials-sync:history-capacity': (id: string) => materialSync.capacity(id),
+    'materials-sync:dag-preview': (id: string) => materialSync.previewHistoryDag(id),
+    'materials-sync:dag-archive': request => materialSync.archiveHistoryDag(request),
+    'materials-sync:dag-import-open': async (id: string) => {
+      workspace.getProject(id);
+      const result = await dialog.showOpenDialog(window!, { title: '导入已完成的完整资料历史ZIP', properties: ['openFile'], filters: [{ name: '完整资料历史ZIP', extensions: ['zip'] }] });
+      if (result.canceled) return null;
+      if (result.filePaths.length !== 1) throw new Error('请选择一份完整资料历史ZIP');
+      return materialSync.openHistoryDagArchive(id, result.filePaths[0]!);
+    },
+    'materials-sync:dag-import-preview': request => materialSync.previewHistoryDagArchive(request),
+    'materials-sync:dag-import-copy': request => materialSync.importHistoryDagArchive(request),
     'materials-sync:history-preview': request => materialSync.previewHistory(request),
     'materials-sync:history-copy': request => materialSync.copyHistory(request),
     'materials-sync:history-archive': request => materialSync.archiveHistory(request),
@@ -633,7 +644,7 @@ async function bootstrap() {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
-      if (exitToken && /^(ai:(start|test|models|review-batch)|macros:(preview|import)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive|history-import-open|history-import-copy))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && /^(ai:(start|test|models|review-batch)|macros:(preview|import)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive|history-import-open|history-import-copy|dag-archive|dag-import-open|dag-import-copy))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
       const readOnly = /^(models:auxiliary|ai:(connections|tasks)|detector:(connections|reports|usage|batch-state)|memory:batch-state|knowledge:index-status|drafts:read|projects:list|chapters:(list|read|order|conflicts)|notes:read|book:read|characters:read|planning:read|memory:read|materials:location|recovery:(list|read))$/.test(channel);
       const tracked = !channel.startsWith('app:') && !readOnly;
       if (tracked) activeRequests++;
@@ -643,7 +654,7 @@ async function bootstrap() {
         // Cancellation only aborts that in-memory session and must bypass queued swaps.
         if (channel === 'macros:preview' || channel === 'macros:cancel-preview') return await handler(...args);
         // Capacity only counts directory entries; it never recovers a pending swap or writes metadata.
-        if (channel === 'materials-sync:history-capacity') return await materialGate.shared(() => handler(...args));
+        if (channel === 'materials-sync:history-capacity' || channel === 'materials-sync:dag-preview') return await materialGate.shared(() => handler(...args));
         if (channel.startsWith('materials-sync:')) {
           // All pre-existing IPC, including reads that create missing Markdown files,
           // must finish before exchanging the canonical directory. Status may

@@ -183,3 +183,6 @@ export function parseMaterialHistoryArchive(bytes: Uint8Array, completionBytes: 
   if (total !== declaredBytes) throw new Error('历史ZIP总大小与完成清单不符');
   return { manifest, data, sha256: digest, archiveBytes: bytes.byteLength, bytes: total };
 }
+
+// The DAG archive uses the same narrow, bounded container with flat content hashes.
+export { zipEntries as readBoundedMaterialZip };

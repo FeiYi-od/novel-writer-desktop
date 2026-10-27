@@ -1,6 +1,7 @@
 import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryCapacitySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult, MaterialHistoryImportRequest, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportResult } from './material-sync';
 import type { DocxStructureSnapshot, DocxStructureAction, DocxStructureEditResult } from './docx-structure';
 import type { MacroContext, MacroPreviewResult, MacroImportResult } from './macros';
+import type { MaterialHistoryDagPreview, MaterialHistoryDagRequest, MaterialHistoryDagArchiveResult, MaterialHistoryDagImportRequest, MaterialHistoryDagImportPreview, MaterialHistoryDagImportResult } from './material-sync';
 
 export interface RichNode {
   type: string;
@@ -66,6 +67,11 @@ export interface WriterApi {
   synchronizeMaterials(request: MaterialSyncRequest): Promise<MaterialSyncSnapshot>;
   materialHistory(projectId: string): Promise<MaterialHistorySnapshot>;
   materialHistoryCapacity(projectId: string): Promise<MaterialHistoryCapacitySnapshot>;
+  previewMaterialHistoryDag(projectId: string): Promise<MaterialHistoryDagPreview>;
+  archiveMaterialHistoryDag(request: MaterialHistoryDagRequest): Promise<MaterialHistoryDagArchiveResult>;
+  openMaterialHistoryDagArchive(projectId: string): Promise<MaterialHistoryDagImportPreview | null>;
+  previewMaterialHistoryDagArchive(request: MaterialHistoryDagImportRequest): Promise<MaterialHistoryDagImportPreview>;
+  importMaterialHistoryDagArchive(request: MaterialHistoryDagImportRequest): Promise<MaterialHistoryDagImportResult>;
   previewMaterialHistory(request: MaterialHistoryRequest): Promise<MaterialHistoryPreview>;
   copyMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryCopyResult>;
   archiveMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryArchiveResult>;
