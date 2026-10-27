@@ -1,4 +1,6 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, safeStorage } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, safeStorage, shell } from 'electron';
+import { checkGitHubUpdate } from './github-update';
+import { version as applicationVersion } from '../../package.json';
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { appendFileSync, mkdirSync } from 'node:fs';
@@ -200,6 +202,12 @@ async function bootstrap() {
     if (failed?.status === 'rejected') throw failed.reason;
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
+    'update:version': () => applicationVersion,
+    'update:check': (token: unknown) => {
+      if (token !== undefined && (typeof token !== 'string' || token.length > 512)) throw new Error('GitHub 授权格式无效');
+      return checkGitHubUpdate(applicationVersion, { token: token as string | undefined });
+    },
+    'update:open-page': () => shell.openExternal('https://github.com/FeiYi-od/novel-writer-desktop/releases'),
     'confirmation:read': projectId => confirmations.read(projectId),
     'confirmation:preview': (projectId, relative) => confirmations.preview(projectId, relative),
     'confirmation:confirm': request => confirmations.confirm(request),
@@ -644,12 +652,15 @@ async function bootstrap() {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
+      if (exitToken && channel.startsWith('update:')) throw new Error('正在保存退出，请稍后操作');
       if (exitToken && /^(ai:(start|test|models|review-batch)|macros:(preview|import)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive|history-import-open|history-import-copy|dag-archive|dag-import-open|dag-import-copy))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
       const readOnly = /^(models:auxiliary|ai:(connections|tasks)|detector:(connections|reports|usage|batch-state)|memory:batch-state|knowledge:index-status|drafts:read|projects:list|chapters:(list|read|order|conflicts)|notes:read|book:read|characters:read|planning:read|memory:read|materials:location|recovery:(list|read))$/.test(channel);
       const tracked = !channel.startsWith('app:') && !readOnly;
       if (tracked) activeRequests++;
       try {
         if (channel.startsWith('app:')) return await handler(...args);
+        // Network checks do not touch book files and must not hold the material gate.
+        if (channel.startsWith('update:')) return await handler(...args);
         // Preview reserves its cancellation session before entering the shared gate.
         // Cancellation only aborts that in-memory session and must bypass queued swaps.
         if (channel === 'macros:preview' || channel === 'macros:cancel-preview') return await handler(...args);

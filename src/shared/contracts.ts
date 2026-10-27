@@ -62,6 +62,9 @@ export interface AIModelList { connectionId?: string; baseUrl: string; checkedAt
 export interface DiscussionMessageView { id: string; role: 'user' | 'assistant' | 'system'; content: string; at: string; compressedInto?: string }
 
 export interface WriterApi {
+  updateVersion(): Promise<string>;
+  checkUpdate(token?: string): Promise<{ currentVersion: string; latestVersion: string; updateAvailable: boolean; releaseUrl: string }>;
+  openUpdatePage(): Promise<void>;
   materialSyncStatus(projectId: string, remoteRevision?: string): Promise<MaterialSyncSnapshot>;
   configureMaterialSync(projectId: string, enabled: boolean): Promise<MaterialSyncSnapshot>;
   synchronizeMaterials(request: MaterialSyncRequest): Promise<MaterialSyncSnapshot>;

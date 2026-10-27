@@ -38,6 +38,7 @@ import { ChapterConfirmations } from './ChapterConfirmations';
 import { exitSaves } from './save-before-exit';
 import { MaterialSyncPanel } from './MaterialSyncPanel';
 import type { MaterialSyncSnapshot } from '../../shared/material-sync';
+import { UpdatePanel } from './UpdatePanel';
 
 const tabs: { id: NoteKind | 'ai' | 'memory'; label: string }[] = [
   { id: 'characters', label: '人物' }, { id: 'world', label: '世界观' }, { id: 'preset', label: '预设' },
@@ -85,6 +86,8 @@ export function App() {
   const [sceneOpen, setSceneOpen] = useState(false);
   const [styleHistoryOpen, setStyleHistoryOpen] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [updateVersion, setUpdateVersion] = useState('');
   const [worldOpen, setWorldOpen] = useState<string | null>(null);
   const [macroOpen, setMacroOpen] = useState<string | null>(null);
   const [nasOpen, setNasOpen] = useState(false);
@@ -361,6 +364,7 @@ export function App() {
     {macroOpen && <MacroPanel key={macroOpen} projectId={macroOpen} sampleText={document && typeof document.content !== 'string' ? copyableText(document.content).split('\n')[0] ?? '' : ''} blocked={busy || autoSaving} onClose={() => setMacroOpen(null)} />}
     {worldOpen && <WorldInfoPanel key={worldOpen} projectId={worldOpen} sampleText={document && typeof document.content !== 'string' ? copyableText(document.content) : ''} characterNames={(activeBook?.value.styles ?? []).length >= 0 ? [] : []} blocked={busy || autoSaving} onClose={() => setWorldOpen(null)} />}
     {usageOpen && <UsagePanel onClose={() => setUsageOpen(false)} />}
+    {updateOpen && <UpdatePanel currentVersion={updateVersion} onCheck={token => window.writer.checkUpdate(token || undefined)} onOpenPage={() => window.writer.openUpdatePage()} onClose={() => setUpdateOpen(false)} />}
     {sceneOpen && <SceneAnalysisPanel document={document} title={chapters.find(chapter => chapter.path === document?.path)?.name ?? '当前章节'} onClose={() => setSceneOpen(false)} />}
     {trialOpen && <StyleTrialPanel key={trialOpen} projectId={trialOpen} connections={connections} styles={activeBook?.value.styles.map(style => ({ id: style.id, name: style.name })) ?? []} blocked={busy || autoSaving} onClose={() => setTrialOpen(null)} />}
     {blueprintOpen && <BlueprintPanel key={blueprintOpen} projectId={blueprintOpen} volumes={activeBook?.value.volumes.map(volume => ({ id: volume.id, title: volume.title })) ?? []} chapters={chapters} blocked={busy || autoSaving} onDirty={setOrderDirty} onClose={() => setBlueprintOpen(null)} />}
@@ -409,6 +413,7 @@ export function App() {
       <button disabled={!active || busy} onClick={() => setView('detection')}>朱雀检测</button>
       <button className={view === 'ai-settings' ? 'active' : ''} onClick={() => setView('ai-settings')}>模型设置</button>
       <button data-testid="usage-open" onClick={() => setUsageOpen(true)}>用量统计</button>
+      <button data-testid="update-open" disabled={exiting} onClick={() => { setUpdateOpen(true); void window.writer.updateVersion().then(setUpdateVersion).catch(() => setError('无法读取当前版本，请重启应用后重试')); }}>检查更新</button>
       <button className={view === 'knowledge' ? 'active' : ''} disabled={!active || busy} onClick={() => setView('knowledge')}>知识检索</button>
       <button className="save-exit" disabled={busy || autoSaving || exiting || materialSyncBusy} onClick={() => void saveAndExit()}>保存并退出</button>
       <button className="primary" disabled={busy || autoSaving} onClick={() => {

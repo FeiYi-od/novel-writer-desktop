@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { WriterApi } from '../shared/contracts';
 
 const api: WriterApi = {
+  updateVersion: () => ipcRenderer.invoke('update:version'),
+  checkUpdate: token => ipcRenderer.invoke('update:check', token),
+  openUpdatePage: () => ipcRenderer.invoke('update:open-page'),
   chapterConfirmations: projectId => ipcRenderer.invoke('confirmation:read', projectId),
   previewChapterConfirmation: (projectId, path) => ipcRenderer.invoke('confirmation:preview', projectId, path),
   confirmChapterVersion: request => ipcRenderer.invoke('confirmation:confirm', request),
