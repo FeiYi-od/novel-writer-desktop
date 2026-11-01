@@ -36,7 +36,8 @@ async function main() {
     await page.getByLabel('深度思考').selectOption('disabled');
     await page.getByLabel('API 基础地址', { exact: true }).fill(`http://127.0.0.1:${port}/v1`);
     await page.getByLabel('模型名称', { exact: true }).fill('model-01');
-    await page.getByLabel('API 密钥', { exact: true }).fill('test-key-abcdef');
+    // 060 起：有密钥的连接不读写共享缓存，这里用匿名连接验证缓存本身
+    await page.getByLabel('API 密钥', { exact: true }).fill('');
     await page.getByRole('button', { name: '获取模型列表' }).click();
     await page.getByLabel('服务商模型列表').waitFor();
     assert.equal(calls, 1, '首次应请求服务');

@@ -14,6 +14,7 @@ import { AIService } from '../src/main/ai-service';
 import { textDocument } from '../src/main/text-import';
 import type { KnowledgeService } from '../src/main/knowledge-service';
 import type { KnowledgeCitationReference } from '../src/shared/contracts';
+import { WAIT_LIMIT } from './wait';
 
 const citationId = 'c'.repeat(64);
 const hit = (id: string, sourcePath = 'chapters:月钥.txt') => ({ id, projectId: 'p', corpus: 'canon' as const, sourcePath, sourceHash: 'a'.repeat(64),
@@ -46,7 +47,7 @@ async function fixture(t: TestContext, behaviour: 'ok' | 'degrade' | 'fail' = 'o
   return { service, a, chapter, connectionId: saved.connections[0].id, searches };
 }
 const waitTask = async (service: AIService, projectId: string, id: string) => {
-  const deadline = Date.now() + 8000;
+  const deadline = Date.now() + WAIT_LIMIT;
   while (Date.now() < deadline) {
     const task = (await service.list(projectId)).find(item => item.id === id);
     if (task && task.status !== 'running') return task;

@@ -67,6 +67,17 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
     setSnapshot(result); setResolutions({});
     setSelectedRevision(revision && result.remoteRevisions.some(item => item.id === revision) ? revision : '');
   };
+  // A restore may have changed disk even when its IPC reports an error. Reload
+  // all material views and invalidate old branch selections before unlocking.
+  const refreshAfterHistoryRestore = async (id: string) => {
+    if (!mounted.current || currentProject.current !== id) throw new Error('小说已切换，无法安全刷新资料');
+    const result = await window.writer.materialSyncStatus(id);
+    if (!mounted.current || currentProject.current !== id || result.projectId !== id) throw new Error('恢复后同步状态的小说标识不匹配');
+    await onSynchronized(result);
+    if (!mounted.current || currentProject.current !== id) throw new Error('刷新期间小说已切换');
+    accept(result, id);
+    setNotice('本机资料已重新读取；请重新核对同步差异。');
+  };
   const operate = async (action: (id: string) => Promise<MaterialSyncSnapshot>, options: { mutate?: boolean; revision?: string; synchronized?: boolean } = {}) => {
     if (running.current || historyOpen || (options.mutate && blocked)) return;
     const id = projectId; const ticket = ++request.current;
@@ -153,5 +164,5 @@ export function MaterialSyncPanel({ projectId, title, blocked, onClose, onBefore
       <button type="button" data-testid="history-open" disabled={busy || historyOpen} onClick={() => setHistoryOpen(true)}>浏览历史与找回资料</button>
     </details>
     <footer><p>{mustChooseRevision ? '请先选择本次采用的传输版本。' : unresolved > 0 ? `还有 ${unresolved} 项冲突需要明确选择。` : '未执行的选择不会写入任何资料。'}</p><button type="button" className="primary" data-testid="material-sync-run" disabled={busy || blocked || !snapshot?.enabled || mustChooseRevision || unresolved > 0 || snapshot.status === 'blocked'} onClick={sync}>{busy ? '正在处理…' : conflicts.length > 0 ? '按选择合并并同步' : '立即同步'}</button></footer>
-  </section></div>{historyOpen && <MaterialHistoryPanel key={projectId} projectId={projectId} title={title} blocked={blocked} onBeforeCopy={onBeforeSync} onBusy={setHistoryBusy} onClose={() => setHistoryOpen(false)} />}</>;
+  </section></div>{historyOpen && <MaterialHistoryPanel key={projectId} projectId={projectId} title={title} blocked={blocked} onBeforeCopy={onBeforeSync} onAfterRestore={refreshAfterHistoryRestore} onBusy={setHistoryBusy} onClose={() => setHistoryOpen(false)} />}</>;
 }

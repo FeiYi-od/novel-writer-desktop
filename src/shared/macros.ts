@@ -1,4 +1,6 @@
-export interface MacroContext { characterName?: string; userName?: string; lastMessage?: string }
+/** Preview-only explicit inputs; nothing is stored or applied to AI requests. */
+export interface MacroContext { characterName?: string; userName?: string; lastMessage?: string;
+  nicknamePreviewEnabled?: boolean; useNicknameForMacros?: boolean; userNickname?: string; characterNickname?: string }
 export interface MacroPreviewResult {
   schemaVersion: 1;
   projectId: string;

@@ -7,6 +7,9 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import mammoth from 'mammoth';
 import { LibraryStore } from './library';
 import { CharacterStore } from './characters';
+import { CharacterTagMappingStore } from './character-tag-mapping';
+import { inspectSillyPlugin } from './silly-plugin-inspect';
+import { worldCharacterContexts } from '../core/world-character-context';
 import { Workspace } from './workspace';
 import { MaterialSyncService } from './material-sync';
 import { OperationGate } from './operation-gate';
@@ -114,6 +117,7 @@ async function bootstrap() {
   const recovery = new RecoveryStore(path.join(app.getPath('userData'), 'recovery-checkpoints'), workspace);
   const library = new LibraryStore(id => workspace.getProject(id), materialsRoot, (id, relative) => workspace.resolveChapterPath(id, relative));
   const characters = new CharacterStore(id => workspace.getProject(id), materialsRoot);
+  const characterTagMappings = new CharacterTagMappingStore(workspace, characters);
   const characterLibrary = new CharacterLibrary(characters);
   const discussion = new DiscussionStore(workspace);
   const worldInfo = new WorldInfoStore(workspace);
@@ -179,7 +183,7 @@ async function bootstrap() {
   const chapterWatcher = new ChapterWatcher((projectId, paths) => {
     if (window && !window.isDestroyed()) window.webContents.send('chapters:external-change', { projectId, paths });
   });
-  const ai = new AIService(app.getPath('userData'), connections, workspace, library, characters, planning, memory, knowledge, worldInfo);
+  const ai = new AIService(app.getPath('userData'), connections, workspace, library, characters, planning, memory, knowledge, worldInfo, characterTagMappings);
   const modelCache = new ModelCache(path.join(app.getPath('userData'), 'model-cache.json'));
   const modelDiscovery = new ModelDiscoveryService(connections, 15000, modelCache);
   const detectorConnections = new AIConnections(path.join(app.getPath('userData'), 'detection'), {
@@ -202,6 +206,16 @@ async function bootstrap() {
     if (failed?.status === 'rejected') throw failed.reason;
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
+    'plugin:inspect': async (projectId: string) => {
+      const project = { ...workspace.getProject(projectId) };
+      const selected = await dialog.showOpenDialog(window!, { title: '选择酒馆插件文件夹', properties: ['openDirectory'] });
+      if (selected.canceled || selected.filePaths.length !== 1) return null;
+      const result = await inspectSillyPlugin(projectId, selected.filePaths[0]);
+      if (workspace.getProject(projectId).root !== project.root || result.projectId !== projectId) throw new Error('小说归属已变化，请重新检查');
+      return result;
+    },
+    'tag-mapping:read': (projectId: string) => characterTagMappings.read(projectId),
+    'tag-mapping:save': (projectId: string, mappings: unknown, hash: string, characterHash: string) => characterTagMappings.save(projectId, mappings as never, hash, characterHash),
     'update:version': () => applicationVersion,
     'update:check': (token: unknown) => {
       if (token !== undefined && (typeof token !== 'string' || token.length > 512)) throw new Error('GitHub 授权格式无效');
@@ -306,6 +320,10 @@ async function bootstrap() {
     'materials-sync:synchronize': request => materialSync.synchronize(request),
     'materials-sync:history': (id: string) => materialSync.history(id),
     'materials-sync:history-capacity': (id: string) => materialSync.capacity(id),
+    'materials-sync:history-retain': request => materialSync.retainHistory(request),
+    'materials-sync:history-reclaim': request => materialSync.reclaimHistory(request),
+    'materials-sync:history-reclaim-transport': request => materialSync.reclaimTransportHistory(request),
+    'materials-sync:history-restore': request => materialSync.restoreHistory(request),
     'materials-sync:dag-preview': (id: string) => materialSync.previewHistoryDag(id),
     'materials-sync:dag-archive': request => materialSync.archiveHistoryDag(request),
     'materials-sync:dag-import-open': async (id: string) => {
@@ -331,6 +349,7 @@ async function bootstrap() {
     'materials-sync:history-import-copy': request => materialSync.importHistoryArchive(request),
     'docx:structure': (id: string, chapterPath: string, hash: string) => docxCopies.structure(id, chapterPath, hash),
     'docx:structure-batch': (id: string, chapterPath: string, actions, hash: string) => docxCopies.batchEdit(id, chapterPath, actions, hash),
+    'docx:format': (id: string, chapterPath: string, targets, hash: string) => docxCopies.formatParagraphs(id, chapterPath, targets, hash),
     'materials:location': (id: string) => { workspace.getProject(id); return materialDirectory(materialsRoot, id); },
     'materials:generate': request => ai.startMaterial(request),
     'materials:import': async (id: string) => {
@@ -404,8 +423,17 @@ async function bootstrap() {
       return macros.importBytes(id, bytes);
     },
     'world:list': (id: string) => worldInfo.list(id),
-    'world:remove': (id: string, name: string) => worldInfo.remove(id, name),
+    'world:remove': (id: string, name: string, expectedHash: string) => worldInfo.remove(id, name, expectedHash),
     'world:preview': (id: string, names: string[], text: string, characterNames?: string[]) => worldInfo.preview(id, names, text, characterNames),
+    'world:preview-enabled': async (id: string, names: string[], text: string, tagIds?: unknown) => {
+      if (tagIds !== undefined && (!Array.isArray(tagIds) || tagIds.length > 100 || tagIds.some(tag => typeof tag !== 'string' || !tag || tag.length > 256))) throw new Error('标签 ID 无效，最多输入100个，每个不超过256字符');
+      const snapshot = await characters.read(id);
+      if (snapshot.value.projectId !== id || snapshot.value.cards.some(card => card.projectId !== id)) throw new Error('角色卡不属于当前小说');
+      const enabled = snapshot.value.cards.filter(card => card.enabled).map(card => card.name);
+      const mapping = await characterTagMappings.read(id);
+      const contexts = worldCharacterContexts(id, snapshot, mapping);
+      return worldInfo.preview(id, names, text, enabled, tagIds as string[] | undefined, false, tagIds === undefined ? contexts : undefined);
+    },
     'world:import': async (id: string) => {
       const picked = await dialog.showOpenDialog({ title: '导入 SillyTavern 世界书', filters: [{ name: '世界书', extensions: ['json'] }], properties: ['openFile'] });
       if (picked.canceled || !picked.filePaths[0]) return null;
@@ -537,6 +565,8 @@ async function bootstrap() {
     'docx:body': (id: string, chapterPath: string, expectedHash: string) => docxCopies.body(id, chapterPath, expectedHash),
     'docx:editStructure': (id: string, chapterPath: string, action: unknown, expectedHash: string) => docxCopies.edit(id, chapterPath, action, expectedHash),
     'chapters:saveFidelityCopy': (id: string, chapterPath: string, paragraphs: string[], expectedHash: string) => docxCopies.rewrite(id, chapterPath, paragraphs, expectedHash),
+    'docx:body-structure': (id: string, chapterPath: string, expectedHash: string) => docxCopies.bodyStructure(id, chapterPath, expectedHash),
+    'docx:body-edit': (id: string, chapterPath: string, actions: unknown, expectedHash: string) => docxCopies.editBody(id, chapterPath, actions, expectedHash),
     'recovery:rawList': (id: string) => { workspace.getProject(id); return listRawDrafts(path.join(app.getPath('userData'), 'recovery'), id); },
     'recovery:rawRead': (id: string, draftId: string) => { workspace.getProject(id); return readRawDraft(path.join(app.getPath('userData'), 'recovery'), id, draftId); },
     'recovery:previousPrune': (id: string, dryRun: boolean) => { workspace.getProject(id); return prunePreviousVersions(path.join(app.getPath('userData'), 'recovery'), id, { dryRun }); },
@@ -652,6 +682,10 @@ async function bootstrap() {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
+      if (exitToken && channel === 'plugin:inspect') throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && channel === 'tag-mapping:save') throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && channel === 'materials-sync:history-retain') throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && channel === 'materials-sync:history-restore') throw new Error('正在保存退出，请稍后操作');
       if (exitToken && channel.startsWith('update:')) throw new Error('正在保存退出，请稍后操作');
       if (exitToken && /^(ai:(start|test|models|review-batch)|macros:(preview|import)|materials:generate|planning:generate|memory:(generate|generate-batch|cancel-batch)|style:learn|detector:(detect|test|quota|batch|cancel-batch)|models:test-(embedding|rerank)|knowledge:(search|sources|index-rebuild|cancel-index)|drafts:(save|clear)|confirmation:(read|preview|confirm|disable)|projects:open|chapters:(create|copy|rename)|docx:(replaceImage|editStructure)|materials-sync:(history-copy|history-archive|history-import-open|history-import-copy|dag-archive|dag-import-open|dag-import-copy))$/.test(channel)) throw new Error('正在保存退出，请稍后操作');
       const readOnly = /^(models:auxiliary|ai:(connections|tasks)|detector:(connections|reports|usage|batch-state)|memory:batch-state|knowledge:index-status|drafts:read|projects:list|chapters:(list|read|order|conflicts)|notes:read|book:read|characters:read|planning:read|memory:read|materials:location|recovery:(list|read))$/.test(channel);

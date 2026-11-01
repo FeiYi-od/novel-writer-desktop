@@ -7,7 +7,7 @@ import { readBoundedMaterialZip } from './material-history-zip';
 const MiB = 1024 * 1024;
 export const MATERIAL_DAG_LIMITS = Object.freeze({
   contentBytes: 64 * MiB, archiveBytes: 80 * MiB, manifestBytes: 8 * MiB,
-  references: 10000, blobs: 10000, versions: 1000, fileBytes: 32 * MiB,
+  references: 10000, blobs: 10000, versions: 1000, localVersions: 2000, fileBytes: 32 * MiB,
   rawManifestBytes: 8 * MiB, referencedBytes: 256 * MiB
 });
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -19,7 +19,7 @@ const revisionSchema = z.object({ schemaVersion: z.literal(1), projectId: z.uuid
 const manifestSchema = z.object({ schemaVersion: z.literal(1), kind: z.literal('material-history-dag-archive'), projectId: z.uuid(),
   archiveId: z.uuid(), createdAt: z.iso.datetime(), fingerprint: hashSchema,
   transport: z.array(z.object({ id: z.uuid(), manifestSha256: hashSchema }).strict()).max(MATERIAL_DAG_LIMITS.versions),
-  local: z.array(z.object({ id: z.uuid(), createdAt: z.iso.datetime(), entries: z.array(entrySchema).max(MATERIAL_DAG_LIMITS.references) }).strict()).max(MATERIAL_DAG_LIMITS.versions),
+  local: z.array(z.object({ id: z.uuid(), createdAt: z.iso.datetime(), entries: z.array(entrySchema).max(MATERIAL_DAG_LIMITS.references) }).strict()).max(MATERIAL_DAG_LIMITS.localVersions),
   leaves: z.array(z.uuid()).max(MATERIAL_DAG_LIMITS.versions),
   blobs: z.array(z.object({ sha256: hashSchema, bytes: z.number().int().min(0).max(MATERIAL_DAG_LIMITS.fileBytes) }).strict()).max(MATERIAL_DAG_LIMITS.blobs)
 }).strict();

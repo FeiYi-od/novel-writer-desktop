@@ -62,6 +62,41 @@ test('世界书：大小写敏感、概率与上限', () => {
   assert.equal(selectWorldEntries(world, 'Heavy Rain', 1).length, 1);
 });
 
+test('世界书：标签 ID 与角色名称分别筛选，未知映射不误当作空映射', () => {
+  const world = parseWorldInfoFile({ entries: {
+    0: { key: ['星港'], content: '只按标签包含', characterFilter: { isExclude: false, names: [], tags: ['tag-alpha'] } },
+    1: { key: ['星港'], content: '角色和标签均包含', characterFilter: { isExclude: false, names: ['林夏'], tags: ['tag-alpha'] } },
+    2: { key: ['星港'], content: '排除名称和标签', characterFilter: { isExclude: true, names: ['阿岚'], tags: ['tag-block'] } }
+  } });
+  const content = (names: string[], tagIds?: string[]) => selectWorldEntries(world, '星港', { characterNames: names, characterTagIds: tagIds, maxRecursion: 0 }).map(item => item.content).sort();
+  assert.deepEqual(content(['林夏'], ['tag-alpha']), ['只按标签包含', '排除名称和标签', '角色和标签均包含'].sort());
+  assert.deepEqual(content(['林夏'], []), ['排除名称和标签']);
+  assert.deepEqual(content(['阿岚'], ['tag-alpha']), ['只按标签包含']);
+  assert.deepEqual(content(['林夏'], ['tag-block']), []);
+  assert.deepEqual(content(['林夏']), ['只按标签包含', '排除名称和标签', '角色和标签均包含'].sort(), '没有 tagMap 时跳过标签判断，不能假称映射为空');
+});
+
+test('世界书：名称和标签必须来自同一个已确认角色', () => {
+  const world = parseWorldInfoFile({ entries: { 0: { key: ['星港'], content: '不可跨角色拼接', characterFilter: { isExclude: false, names: ['alpha-avatar'], tags: ['tag-red'] } } } });
+  const a = { avatarKey: 'alpha-avatar', tagIds: ['tag-blue'] }, b = { avatarKey: 'beta-avatar', tagIds: ['tag-red'] };
+  assert.deepEqual(selectWorldEntries(world, '星港', { characters: [a, b], omitUnknownTagEntries: true }), []);
+  assert.equal(selectWorldEntries(world, '星港', { characters: [{ ...a, tagIds: ['tag-red'] }, b], omitUnknownTagEntries: true }).length, 1);
+  assert.deepEqual(selectWorldEntries(world, '星港', { characters: [{ avatarKey: 'alpha-avatar', tagIds: undefined }], omitUnknownTagEntries: true }), []);
+});
+
+test('世界书共享上下文：任一启用角色命中排除条件即不注入', () => {
+  const world = parseWorldInfoFile({ entries: {
+    0: { key: ['星港'], content: '排除甲', characterFilter: { isExclude: true, names: ['avatar-a'], tags: [] } },
+    1: { key: ['星港'], content: '排除红标签', characterFilter: { isExclude: true, names: [], tags: ['tag-red'] } },
+    2: { key: ['星港'], content: '无相关排除', characterFilter: { isExclude: true, names: ['avatar-c'], tags: ['tag-green'] } },
+    3: { key: ['星港'], content: '甲与蓝标签', characterFilter: { isExclude: false, names: ['avatar-a'], tags: ['tag-blue'] } }
+  } });
+  const actors = [{ avatarKey: 'avatar-a', tagIds: ['tag-blue'] }, { avatarKey: 'avatar-b', tagIds: ['tag-red'] }];
+  assert.deepEqual(selectWorldEntries(world, '星港', { characters: actors, omitUnknownTagEntries: true }).map(item => item.content).sort(), ['无相关排除', '甲与蓝标签'].sort());
+  const unknown = [{ avatarKey: 'avatar-a', tagIds: ['tag-blue'] }, { avatarKey: 'avatar-b', tagIds: undefined }];
+  assert.deepEqual(selectWorldEntries(world, '星港', { characters: unknown, omitUnknownTagEntries: true }).map(item => item.content), ['甲与蓝标签'], '标签排除的某角色映射未知时不注入 AI');
+});
+
 test('世界书：概率、递归扫描、角色过滤与 at_depth 映射', () => {
   const entry = (over: Partial<StWorldEntry> & { id: string; content: string }) => ({
     keys: [], secondaryKeys: [], comment: '', selective: false, selectiveLogic: 'AND_ANY' as const, constant: false, disabled: false,

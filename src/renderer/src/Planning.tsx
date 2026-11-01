@@ -8,6 +8,7 @@ export function Planning({ projectId, connections, blocked, onDirty, onSaved }: 
   const [tasks, setTasks] = useState<AITask[]>([]); const [selected, setSelected] = useState('');
   const [hashes, setHashes] = useState({ world: '', character: '' }); const [message, setMessage] = useState(''); const [error, setError] = useState('');
   const [restorable, setRestorable] = useState<UiDraft | null>(null);
+  const [draftError, setDraftError] = useState('');
   const lock = useRef(false);
   const refresh = async () => { const [data, notes, cards] = await Promise.all([window.writer.readPlanning(projectId), window.writer.readNotes(projectId), window.writer.readCharacters(projectId)]); setSnapshot(data); setHashes({ world: notes.hash, character: cards.hash }); setDirty(false); };
   useEffect(() => { void refresh().catch(e => setError(String(e))); }, [projectId]);
@@ -20,7 +21,7 @@ export function Planning({ projectId, connections, blocked, onDirty, onSaved }: 
   }, [projectId]);
   useEffect(() => {
     if (!dirty || !snapshot) return;
-    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'planning', { doc: JSON.stringify(snapshot.value) }).catch(() => {}); }, 800);
+    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'planning', { doc: JSON.stringify(snapshot.value) }).then(() => setDraftError('')).catch(e => setDraftError('未保存草稿自动备份失败，请保留当前页面并先保存或复制内容：' + String(e))); }, 800);
     return () => clearTimeout(timer);
   }, [dirty, projectId, snapshot]);
   useEffect(() => {
@@ -42,7 +43,7 @@ export function Planning({ projectId, connections, blocked, onDirty, onSaved }: 
   const task = tasks.find(t => t.id === selected) ?? tasks.find(t => t.mode === `plan-${kind}`);
   const running = tasks.some(t => t.status === 'running');
   return <section className="ai-page planning-page"><header className="ai-heading"><div><small>STORY WORKSHOP</small><h1>创作筹备</h1><p>从构想到设定：保存提示词与草稿，确认后用于本书写作和审稿。</p></div></header>
-    {error && <div role="alert" className="error">{error}</div>}{message && <p role="status">{message}</p>}
+    {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}{message && <p role="status">{message}</p>}
     {restorable?.values.doc && <div className="notice" role="status">上次退出前有未保存的筹备草稿（{new Date(restorable.updatedAt).toLocaleString()}）。<button disabled={busy} onClick={restoreDraft}>恢复上次草稿</button><button disabled={busy} onClick={discardDraft}>丢弃草稿</button></div>}
     {snapshot && <><div className="planning-tabs">{planningKinds.map(item => <button key={item} className={kind === item ? 'active' : ''} disabled={busy} onClick={() => { setKind(item); setSelected(''); }}>{planningLabels[item]}</button>)}</div>
     <div className="ai-columns"><aside className="ai-panel ai-form"><h2>创作要求</h2>

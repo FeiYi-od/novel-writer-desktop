@@ -10,7 +10,8 @@ import { analyzeRegexImport } from './regex-import';
 
 export type { MacroContext } from '../shared/macros';
 const MAX_BYTES = REGEX_PREVIEW_LIMITS.payloadBytes;
-const contextSchema = z.object({ characterName: z.string().max(512).optional(), userName: z.string().max(512).optional(), lastMessage: z.string().max(20000).optional() }).strict();
+const contextSchema = z.object({ characterName: z.string().max(512).optional(), userName: z.string().max(512).optional(), lastMessage: z.string().max(20000).optional(),
+  nicknamePreviewEnabled: z.boolean().optional(), useNicknameForMacros: z.boolean().optional(), userNickname: z.string().max(512).optional(), characterNickname: z.string().max(512).optional() }).strict();
 const hash = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const absent = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
 const same = (left: string, right: string) => path.relative(left, right) === '';
@@ -198,7 +199,9 @@ export class MacroStore {
         assertActive();
         const character = frozenContext.characterName ?? '';
         const env: MacroEnv = { char: character, user: frozenContext.userName ?? '作者', description: '', personality: '', scenario: '', persona: '', mesExamples: '',
-          lastMessage: frozenContext.lastMessage ?? '', original: input, seed: `${id}:${character}` };
+          lastMessage: frozenContext.lastMessage ?? '', original: input, seed: `${id}:${character}`,
+          nicknamePreviewEnabled: frozenContext.nicknamePreviewEnabled === true, useNicknameForMacros: frozenContext.useNicknameForMacros === true,
+          userNickname: frozenContext.userNickname ?? '', charNickname: frozenContext.characterNickname ?? '' };
         const value = await this.runner.run({ projectId: id, requestId: request, text: input, scripts: source.scripts, env }, job.controller.signal);
         assertActive();
         if (value.projectId !== id || value.requestId !== request) throw new Error('正则预览结果的小说或请求标识不匹配');

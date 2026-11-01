@@ -2,9 +2,10 @@ import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import JSZip from 'jszip';
 import { z } from 'zod';
-import { bodyParagraphTexts, editDocxStructure, listImages, listTables, replaceImage, rewriteDocxParagraphs, structureHeader, structureTables } from './docx-fidelity';
+import { bodyParagraphTexts, bodyStructureParagraphs, editDocxBody, editDocxStructure, formatDocxParagraphs, listImages, listTables, replaceImage, rewriteDocxParagraphs, structureHeader, structureTables, type ParagraphFormat } from './docx-fidelity';
 import type { Workspace } from './workspace';
 import type { DocxStructureAction, DocxStructureEditResult, DocxStructureSnapshot } from '../shared/docx-structure';
+import type { DocxBodyEditResult, DocxBodySnapshot } from '../shared/docx-body';
 
 const MAX_SOURCE = 20 * 1024 * 1024;
 const MAX_EXPANDED = 64 * 1024 * 1024;
@@ -22,6 +23,20 @@ const actionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('header'), part: partSchema, paragraphs: paragraphsSchema }).strict()
 ]);
 const batchSchema = z.array(actionSchema).min(1).max(100).refine(actions => actions.reduce((sum, action) => sum + ('paragraphs' in action ? action.paragraphs.reduce((bytes, text) => bytes + Buffer.byteLength(text), 0) : 0), 0) <= 8 * 1024 * 1024, '整批改写文字超过8 MiB，请分批处理');
+const bodyActionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('update'), index: indexSchema, text: paragraphSchema }).strict(),
+  z.object({ kind: z.literal('remove'), index: indexSchema }).strict(),
+  z.object({ kind: z.literal('insert'), index: indexSchema, position: z.enum(['before', 'after']), paragraphs: paragraphsSchema.refine(value => value.length >= 1 && value.length <= 200, '插入需要1至200段') }).strict()
+]);
+const bodyBatchSchema = z.array(bodyActionSchema).min(1).max(10200);
+const formatSchema = z.object({
+  align: z.enum(['left', 'center', 'right', 'both']).optional(),
+  firstLineChars: z.number().int().min(0).max(20).optional(),
+  lineSpacing: z.number().min(1).max(3).optional(),
+  spaceBeforePt: z.number().min(0).max(200).optional(),
+  spaceAfterPt: z.number().min(0).max(200).optional()
+}).strict();
+const formatBatchSchema = z.array(z.object({ index: indexSchema, format: formatSchema }).strict()).min(1).max(500);
 export type DocxCopyAction = DocxStructureAction;
 
 function sourceRequest(projectId: string, relative: string) {
@@ -115,6 +130,23 @@ export class DocxCopyService {
     const paragraphs = paragraphsSchema.parse(bodyParagraphTexts(await zip.file('word/document.xml')!.async('string')));
     return { projectId: source.projectId, path: source.path, hash: source.hash, paragraphs };
   }
+  async bodyStructure(projectId: string, relative: string, expectedHash: string): Promise<DocxBodySnapshot> {
+    const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash), source = await this.original(request, hash), zip = await checkedArchive(source.bytes);
+    let xml: string;
+    try { xml = new TextDecoder('utf-8', { fatal: true }).decode(await zip.file('word/document.xml')!.async('uint8array')); }
+    catch { throw new Error('DOCX XML 不是有效 UTF-8，请用 Word/WPS 处理'); }
+    const paragraphs = bodyStructureParagraphs(xml);
+    await this.workspace.readOriginalChapter(request.projectId, source.path, source.hash);
+    return { schemaVersion: 1, projectId: source.projectId, path: source.path, hash: source.hash, paragraphs };
+  }
+  async editBody(projectId: string, relative: string, actions: unknown, expectedHash: string): Promise<DocxBodyEditResult> {
+    const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash), frozen = bodyBatchSchema.parse(structuredClone(actions));
+    const source = await this.original(request, hash), result = await editDocxBody(source.bytes, frozen);
+    if (!result.changed) throw new Error('正文没有改动，无需另存副本');
+    await checkedArchive(result.bytes);
+    const output = await this.workspace.publishOriginalCopy(request.projectId, source.path, source.hash, result.bytes, '保真编辑');
+    return { projectId: request.projectId, sourcePath: source.path, sourceHash: source.hash, path: output.path, paragraphs: result.paragraphs, changed: result.changed };
+  }
   async structure(projectId: string, relative: string, expectedHash: string): Promise<DocxStructureSnapshot> {
     const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash), source = await this.original(request, hash), zip = await checkedArchive(source.bytes);
     const read = async (name: string) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(await zip.file(name)!.async('uint8array')); } catch { throw new Error('DOCX XML 不是有效 UTF-8，已保留原稿，请用 Word/WPS 处理'); } };
@@ -151,7 +183,15 @@ export class DocxCopyService {
     const output = await this.workspace.publishOriginalCopy(request.projectId, source.path, source.hash, result.bytes, '结构编辑');
     return { projectId: request.projectId, sourcePath: source.path, sourceHash: source.hash, path: output.path, changed: result.changed };
   }
-  async replace(projectId: string, relative: string, mediaName: string, image: Uint8Array, expectedHash: string) {
+  /** 只改段落格式（对齐/首行缩进/行距/段间距），另存“排版副本”，原稿不动。 */
+  async formatParagraphs(projectId: string, relative: string, targets: unknown, expectedHash: string) {
+    const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash), frozen = formatBatchSchema.parse(structuredClone(targets));
+    const source = await this.original(request, hash), result = await formatDocxParagraphs(source.bytes, frozen as { index: number; format: ParagraphFormat }[]);
+    if (!result.changed) throw new Error('段落格式没有改动，无需另存副本');
+    await checkedArchive(result.bytes);
+    const output = await this.workspace.publishOriginalCopy(request.projectId, source.path, source.hash, result.bytes, '排版副本');
+    return { projectId: request.projectId, sourcePath: source.path, sourceHash: source.hash, path: output.path, paragraphs: result.paragraphs, changed: result.changed };
+  }  async replace(projectId: string, relative: string, mediaName: string, image: Uint8Array, expectedHash: string) {
     const request = sourceRequest(projectId, relative), hash = hashSchema.parse(expectedHash);
     const name = z.string().regex(/^word\/media\/[^/\\\u0000-\u001f:]+\.(?:png|jpe?g)$/iu, '只能替换已有 PNG/JPEG 图片部件').parse(mediaName);
     if (!(image instanceof Uint8Array) || image.byteLength > MAX_SOURCE) throw new Error('替换图片无效或超过 20 MiB');

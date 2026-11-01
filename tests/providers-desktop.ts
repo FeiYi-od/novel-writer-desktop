@@ -44,6 +44,17 @@ async function main() {
       const connection = saved.connections.find(c => c.name === name)!;
       const task = await page.evaluate(({ chapter, id, mode }) => window.writer.startAI({ projectId: chapter.projectId, chapterPath: chapter.path, sourceHash: chapter.hash, connectionId: id, mode, instruction: '虚构协议测试' }), { chapter: original, id: connection.id, mode });
       await page.waitForFunction(async ({ projectId, id }) => (await window.writer.aiTasks(projectId)).find(t => t.id === id)?.status === 'complete', { projectId: original.projectId, id: task.id });
+      // 父任务完成时可能仍有自动审稿子任务在跑；必须等整批落定再发下一个请求，
+      // 否则 ai:start 会正确地报"已有 AI 任务运行"。
+      await page.waitForFunction(async projectId => {
+        const tasks = await window.writer.aiTasks(projectId);
+        return !tasks.some(item => item.status === 'running');
+      }, original.projectId, { timeout: 30000 });
+      await page.waitForTimeout(200);
+      await page.waitForFunction(async projectId => {
+        const tasks = await window.writer.aiTasks(projectId);
+        return !tasks.some(item => item.status === 'running');
+      }, original.projectId, { timeout: 30000 });
       const complete = (await page.evaluate(id => window.writer.aiTasks(id), original.projectId)).find(t => t.id === task.id)!; assert.ok(!complete.text.includes('忽略的推理')); assert.equal(complete.connection.adapter, connection.adapter);
     }
     assert.deepEqual(await fs.readFile(path.join(folder, original.path)), bytes);

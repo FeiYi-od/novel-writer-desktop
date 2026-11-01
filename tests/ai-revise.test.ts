@@ -14,11 +14,12 @@ import { AIConnections } from '../src/main/ai-connections';
 import { AIService } from '../src/main/ai-service';
 import { textDocument } from '../src/main/text-import';
 import type { AITask } from '../src/shared/contracts';
+import { WAIT_LIMIT } from './wait';
 
 const sse = (text: string) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
 const report = (quote: string, replacement: string) => JSON.stringify({ summary: '本模型核对', issues: [{ category: '错别字', quote, replacement, reason: '明显笔误', evidence: '' }] });
 const until = async (check: () => Promise<boolean>, what: string) => {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + WAIT_LIMIT;
   while (!await check()) { if (Date.now() > deadline) throw new Error(`${what} 等待超时`); await new Promise(resolve => setTimeout(resolve, 15)); }
 };
 type Call = { model: string; messages: { role: string; content: string }[] };

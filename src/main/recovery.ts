@@ -8,25 +8,55 @@ import mammoth from 'mammoth';
 import { decodeText } from './text-import';
 import { selectDraftsToPrune } from '../core/draft-retention';
 import { copyableText, normalizeParagraphs } from '../core/typography';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { Stats } from 'node:fs';
 const schema = z.object({ schemaVersion: z.literal(1), id: z.uuid(), projectId: z.uuid(), sourcePath: z.string().min(1).max(2000), sourceHash: z.string().regex(/^[a-f0-9]{64}$/), revision: z.number().int().nonnegative(), updatedAt: z.string(), status: z.enum(['pending', 'saved']), characters: z.number().int().nonnegative(), content: z.custom<RecoveryDraft['content']>() });
 const inside = (root: string, file: string) => { const relative = path.relative(root, file); return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`); };
+/** Do not allow the recovery root itself to redirect into another book.
+ * Checking only its projectId child after realpath would trust a junction as
+ * the new root. Recheck identity around resolution and child access. */
+async function checkedRecoveryRoot(root: string, create: boolean) {
+  if (create) await fs.mkdir(root, { recursive: true });
+  const before = await fs.lstat(root);
+  if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('恢复根目录或链接异常，原文件已保留');
+  const real = await fs.realpath(root), after = await fs.lstat(root);
+  if (!after.isDirectory() || after.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino)
+    throw new Error('恢复根目录在访问期间变化，原文件已保留');
+  return { real, dev: after.dev, ino: after.ino };
+}
+function sameRecoveryRoot(a: Awaited<ReturnType<typeof checkedRecoveryRoot>>, b: Awaited<ReturnType<typeof checkedRecoveryRoot>>) {
+  return a.real === b.real && a.dev === b.dev && a.ino === b.ino;
+}
+async function recoveryDirectoryIdentity(root: string, directory: string) {
+  const base = await checkedRecoveryRoot(root, false), stat = await fs.lstat(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(base.real, await fs.realpath(directory))) throw new Error('恢复目录或链接异常');
+  const current = await checkedRecoveryRoot(root, false);
+  if (!sameRecoveryRoot(base, current)) throw new Error('恢复根目录已变化');
+  return { base, directory, dev: stat.dev, ino: stat.ino };
+}
+function sameRecoveryDirectory(a: Awaited<ReturnType<typeof recoveryDirectoryIdentity>>, b: Awaited<ReturnType<typeof recoveryDirectoryIdentity>>) {
+  return a.directory === b.directory && a.dev === b.dev && a.ino === b.ino && sameRecoveryRoot(a.base, b.base);
+}
 export class RecoveryStore {
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private root: string, private workspace: Workspace) {}
   private async directory(projectId: string) {
-    this.workspace.getProject(z.uuid().parse(projectId)); await fs.mkdir(this.root, { recursive: true });
-    const root = await fs.realpath(this.root), target = path.join(root, projectId); await fs.mkdir(target, { recursive: true });
+    this.workspace.getProject(z.uuid().parse(projectId));
+    const root = await checkedRecoveryRoot(this.root, true), target = path.join(root.real, projectId); await fs.mkdir(target, { recursive: true });
     const stat = await fs.lstat(target);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(root, await fs.realpath(target))) throw new Error('草稿恢复目录或链接异常'); return target;
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(root.real, await fs.realpath(target))) throw new Error('草稿恢复目录或链接异常');
+    if (!sameRecoveryRoot(root, await checkedRecoveryRoot(this.root, false))) throw new Error('草稿恢复根目录已变化');
+    return target;
   }
   async read(projectId: string, id: string): Promise<RecoveryDraft> {
     z.uuid().parse(id); const directory = await this.directory(projectId), file = path.join(directory, `${id}.json`);
+    const identity = await recoveryDirectoryIdentity(this.root, directory);
     const stat = await fs.lstat(file);
     if (!stat.isFile() || stat.isSymbolicLink() || !inside(directory, await fs.realpath(file))) throw new Error('恢复草稿类型或链接越界');
     if (stat.size > 8 * 1024 * 1024) throw new Error('恢复草稿过大');
     const raw = await fs.readFile(file, 'utf8');
-    if (Buffer.byteLength(raw) > 8 * 1024 * 1024 || directory !== await this.directory(projectId)) throw new Error('恢复草稿过大或目录已变化');
+    if (Buffer.byteLength(raw) > 8 * 1024 * 1024 || directory !== await this.directory(projectId)
+      || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(this.root, directory))) throw new Error('恢复草稿过大或目录已变化');
     const draft = schema.parse(JSON.parse(raw)); validateDocument(draft.content);
     if (draft.projectId !== projectId || draft.id !== id) throw new Error('恢复草稿小说或 ID 不匹配');
     this.source(projectId, draft.sourcePath); return draft;
@@ -37,9 +67,39 @@ export class RecoveryStore {
   }
   private async write(draft: RecoveryDraft) {
     const directory = await this.directory(draft.projectId), file = path.join(directory, `${draft.id}.json`), temp = `${file}.${randomUUID()}.tmp`;
+    const identity = await recoveryDirectoryIdentity(this.root, directory);
     const json = JSON.stringify(draft); if (Buffer.byteLength(json) > 8 * 1024 * 1024) throw new Error('本机草稿超过8 MB限制');
-    try { await fs.writeFile(temp, json, { flag: 'wx' }); for (let attempt = 0; ; attempt++) { if (directory !== await this.directory(draft.projectId)) throw new Error('草稿恢复目录已变化，暂存已保留'); try { await fs.rename(temp, file); break; } catch (e) { if (attempt >= 3 || !['EPERM', 'EACCES', 'EBUSY'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e; await new Promise(r => setTimeout(r, 30 * 2 ** attempt)); } } }
-    finally { await fs.rm(temp, { force: true }); }
+    let temporary: Awaited<ReturnType<typeof fs.open>> | undefined, opened: { dev: number; ino: number } | undefined;
+    try {
+      // Open an exclusive empty file, validate its parent and identity before
+      // putting any private draft bytes into it. The handle then stays bound
+      // to that file even if the path is externally renamed.
+      temporary = await fs.open(temp, 'wx');
+      const handleStat = await temporary.stat(), pathStat = await fs.lstat(temp);
+      opened = { dev: handleStat.dev, ino: handleStat.ino };
+      if (!handleStat.isFile() || handleStat.nlink !== 1 || !pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1
+        || pathStat.dev !== opened.dev || pathStat.ino !== opened.ino
+        || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(this.root, directory))) throw new Error('草稿恢复目录或暂存已变化');
+      await temporary.writeFile(json); await temporary.close(); temporary = undefined;
+      for (let attempt = 0; ; attempt++) {
+        if (directory !== await this.directory(draft.projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(this.root, directory))) throw new Error('草稿恢复目录已变化，暂存已保留');
+        const current = await fs.lstat(temp);
+        if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || current.dev !== opened.dev || current.ino !== opened.ino) throw new Error('草稿暂存文件已变化，未发布');
+        try { await fs.rename(temp, file); break; }
+        catch (e) { if (attempt >= 3 || !['EPERM', 'EACCES', 'EBUSY'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e; await new Promise(r => setTimeout(r, 30 * 2 ** attempt)); }
+      }
+    }
+    finally {
+      await temporary?.close();
+      // A same-path replacement may belong to someone else. Only clean the
+      // temporary name while its containing recovery directory is unchanged.
+      let unchanged = false;
+      try { unchanged = sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(this.root, directory)); } catch { /* leave ambiguous temporary files untouched */ }
+      if (unchanged && opened) {
+        const current = await fs.lstat(temp).catch(e => { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; });
+        if (current?.isFile() && !current.isSymbolicLink() && current.nlink === 1 && current.dev === opened.dev && current.ino === opened.ino) await fs.rm(temp, { force: true });
+      }
+    }
   }
   async checkpoint(input: DraftRequest) {
     const parsed = z.object({ projectId: z.uuid(), id: z.uuid(), path: z.string(), expectedHash: z.string().regex(/^[a-f0-9]{64}$/), revision: z.number().int().nonnegative(), content: z.custom<DraftRequest['content']>() }).parse(input);
@@ -61,9 +121,11 @@ export class RecoveryStore {
     });
   }
   async list(projectId: string): Promise<RecoveryEntry[]> {
-    const directory = await this.directory(projectId), names = (await fs.readdir(directory)).filter(name => /^[a-f0-9-]{36}\.json$/.test(name));
+    const directory = await this.directory(projectId), identity = await recoveryDirectoryIdentity(this.root, directory);
+    const names = (await fs.readdir(directory)).filter(name => /^[a-f0-9-]{36}\.json$/.test(name));
     const result: RecoveryEntry[] = [];
     for (const name of names) { const { content, ...entry } = await this.read(projectId, name.slice(0, -5)); result.push(entry); }
+    if (!sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(this.root, directory))) throw new Error('草稿恢复目录在列出期间变化');
     return result.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 200);
   }
   private serial<T>(action: () => Promise<T>) { const next = this.queue.then(action); this.queue = next.catch(() => {}); return next; }
@@ -78,8 +140,9 @@ type BackupSuffix = 'draft' | 'previous';
 async function backupDirectory(root: string, projectId: string): Promise<string | null> {
   z.uuid().parse(projectId);
   try {
-    const realRoot = await fs.realpath(root), directory = path.join(realRoot, projectId), stat = await fs.lstat(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(realRoot, await fs.realpath(directory))) throw new Error('备份目录或链接异常，原文件已保留');
+    const realRoot = await checkedRecoveryRoot(root, false), directory = path.join(realRoot.real, projectId), stat = await fs.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(realRoot.real, await fs.realpath(directory))) throw new Error('备份目录或链接异常，原文件已保留');
+    if (!sameRecoveryRoot(realRoot, await checkedRecoveryRoot(root, false))) throw new Error('备份根目录已变化，原文件已保留');
     return directory;
   } catch (error) { if (missingFile(error)) return null; throw error; }
 }
@@ -92,16 +155,32 @@ async function checkedBackupFile(directory: string, id: string, maxBytes = MAX_B
   if (stat.size > maxBytes) throw new Error('备份文件过大，原文件已保留');
   return { file, stat };
 }
+type BackupStamp = { dev: number; ino: number; size: number; mtime: number; ctime: number };
+const backupStamp = (stat: Stats): BackupStamp => ({ dev: stat.dev, ino: stat.ino, size: stat.size, mtime: stat.mtimeMs, ctime: stat.ctimeMs });
+const sameStamp = (a: BackupStamp, b: BackupStamp) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtime === b.mtime && a.ctime === b.ctime;
+type MetadataStamp = { stamp: BackupStamp; hash: string } | null;
+async function metadataStamp(directory: string, id: string, suffix: BackupSuffix): Promise<MetadataStamp> {
+  const name = id.replace(new RegExp(`-${suffix}\\.(docx|txt)$`, 'u'), `-${suffix}.meta.json`);
+  try {
+    const before = await checkedBackupFile(directory, name, 64 * 1024), raw = await fs.readFile(before.file);
+    const after = await checkedBackupFile(directory, name, 64 * 1024);
+    if (raw.length !== before.stat.size || !sameStamp(backupStamp(before.stat), backupStamp(after.stat))) throw new Error('备份来源记录在读取期间变化');
+    return { stamp: backupStamp(after.stat), hash: createHash('sha256').update(raw).digest('hex') };
+  } catch (error) { if (missingFile(error)) return null; throw error; }
+}
+const sameMetadataStamp = (a: MetadataStamp, b: MetadataStamp) => a === null ? b === null : b !== null && a.hash === b.hash && sameStamp(a.stamp, b.stamp);
+interface BackupSnapshot { file: BackupStamp; metadata: MetadataStamp }
 async function readBackupBytes(root: string, projectId: string, id: string, suffix: BackupSuffix) {
   z.uuid().parse(projectId); backupName(id, suffix);
   const directory = await backupDirectory(root, projectId);
   if (!directory) throw Object.assign(new Error('备份文件不存在'), { code: 'ENOENT' });
+  const identity = await recoveryDirectoryIdentity(root, directory);
   const initial = await checkedBackupFile(directory, id), bytes = await fs.readFile(initial.file);
   const currentDirectory = await backupDirectory(root, projectId);
-  if (directory !== currentDirectory) throw new Error('备份目录读取期间已变化，请重新读取');
+  if (directory !== currentDirectory || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory))) throw new Error('备份目录读取期间已变化，请重新读取');
   const current = await checkedBackupFile(directory, id);
-  if (bytes.length > MAX_BACKUP_BYTES || initial.stat.size !== current.stat.size || initial.stat.mtimeMs !== current.stat.mtimeMs || initial.stat.ino !== current.stat.ino) throw new Error('备份文件读取期间已变化或过大，请重新读取');
-  return { directory, bytes };
+  if (bytes.length > MAX_BACKUP_BYTES || bytes.length !== initial.stat.size || !sameStamp(backupStamp(initial.stat), backupStamp(current.stat))) throw new Error('备份文件读取期间已变化或过大，请重新读取');
+  return { directory, bytes, identity };
 }
 async function readBackupMetadata(directory: string, id: string, suffix: BackupSuffix) {
   const name = id.replace(new RegExp(`-${suffix}\\.(docx|txt)$`, 'u'), `-${suffix}.meta.json`);
@@ -113,9 +192,10 @@ async function readBackupMetadata(directory: string, id: string, suffix: BackupS
   } catch (error) { if (missingFile(error)) return undefined; throw error; }
 }
 /** 列某一类备份条目（失败副本或保存前版本），共用同一套解析与排序逻辑。 */
-async function listBackupEntries(root: string, projectId: string, suffix: 'draft' | 'previous'): Promise<RawDraftEntry[]> {
+async function listBackupEntries(root: string, projectId: string, suffix: 'draft' | 'previous', snapshots?: Map<string, BackupSnapshot>): Promise<RawDraftEntry[]> {
   const directory = await backupDirectory(root, projectId);
   if (!directory) return [];
+  const identity = await recoveryDirectoryIdentity(root, directory);
   const names = await fs.readdir(directory);
   if (names.length > 20000) throw new Error('本机备份条目过多，请先归档，原文件已保留');
   const pattern = new RegExp(`^[0-9]+-[a-f0-9-]+-${suffix}\\.(docx|txt)$`, 'u');
@@ -123,13 +203,19 @@ async function listBackupEntries(root: string, projectId: string, suffix: 'draft
   for (const name of names) {
     const match = pattern.exec(name);
     if (!match) continue;
-    const { stat } = await checkedBackupFile(directory, name);
+    const { stat } = await checkedBackupFile(directory, name), metadataBefore = snapshots ? await metadataStamp(directory, name, suffix) : null;
     const meta = await readBackupMetadata(directory, name, suffix);
+    if (snapshots) {
+      const after = await checkedBackupFile(directory, name), metadataAfter = await metadataStamp(directory, name, suffix);
+      if (!sameStamp(backupStamp(stat), backupStamp(after.stat)) || !sameMetadataStamp(metadataBefore, metadataAfter)) throw new Error('备份列表读取期间发生变化，原文件已保留');
+      snapshots.set(name, { file: backupStamp(after.stat), metadata: metadataAfter });
+    }
     entries.push({
       id: name, fileName: name, kind: match[1] as 'docx' | 'txt', bytes: stat.size,
       at: meta?.at ?? stat.mtime.toISOString(), sourcePath: meta?.sourcePath ?? '（来源未记录）'
     });
   }
+  if (directory !== await backupDirectory(root, projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory))) throw new Error('备份目录列出期间变化，原文件已保留');
   return entries.sort((left, right) => right.at.localeCompare(left.at));
 }
 /** 保存失败时落盘的原始草稿（比 checkpoint 更底层），列出来让作者能看见并取回。 */
@@ -165,14 +251,14 @@ function ensureInside(root: string, target: string) {
 }
 /** 把原始草稿另存为书目录里的新章节，绝不覆盖原稿。 */
 export async function restoreRawDraft(root: string, projectId: string, id: string, bookRoot: string, now = new Date()) {
-  const { directory, bytes } = await readBackupBytes(root, projectId, id, 'draft');
+  const { directory, bytes, identity } = await readBackupBytes(root, projectId, id, 'draft');
   const meta = await readBackupMetadata(directory, id, 'draft');
   const source = meta?.sourcePath ?? '';
   const base = safeSourceName(source, '草稿');
   const extension = id.endsWith('.txt') ? '.txt' : '.docx';
   const stamp = now.toISOString().replace(/[:.]/gu, '-');
   const realBookRoot = await fs.realpath(bookRoot), target = ensureInside(realBookRoot, path.join(realBookRoot, `${base}-取回-${stamp}${extension}`));
-  if (directory !== await backupDirectory(root, projectId) || realBookRoot !== await fs.realpath(bookRoot)) throw new Error('备份或小说目录已变化，请重新读取后取回');
+  if (directory !== await backupDirectory(root, projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory)) || realBookRoot !== await fs.realpath(bookRoot)) throw new Error('备份或小说目录已变化，请重新读取后取回');
   await fs.writeFile(target, bytes, { flag: 'wx' });
   return { path: path.relative(realBookRoot, target).split(path.sep).join('/') };
 }
@@ -186,14 +272,14 @@ export async function readPreviousVersion(root: string, projectId: string, id: s
 }
 /** 把历史版本另存为书目录里的新章节，绝不覆盖当前原稿。 */
 export async function restorePreviousVersion(root: string, projectId: string, id: string, bookRoot: string, now = new Date()) {
-  const { directory, bytes } = await readBackupBytes(root, projectId, id, 'previous');
+  const { directory, bytes, identity } = await readBackupBytes(root, projectId, id, 'previous');
   const meta = await readBackupMetadata(directory, id, 'previous');
   const source = meta?.sourcePath ?? '';
   const base = safeSourceName(source, '章节');
   const extension = id.endsWith('.txt') ? '.txt' : '.docx';
   const stamp = now.toISOString().replace(/[:.]/gu, '-');
   const realBookRoot = await fs.realpath(bookRoot), target = ensureInside(realBookRoot, path.join(realBookRoot, `${base}-历史版-${stamp}${extension}`));
-  if (directory !== await backupDirectory(root, projectId) || realBookRoot !== await fs.realpath(bookRoot)) throw new Error('备份或小说目录已变化，请重新读取后取回');
+  if (directory !== await backupDirectory(root, projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory)) || realBookRoot !== await fs.realpath(bookRoot)) throw new Error('备份或小说目录已变化，请重新读取后取回');
   await fs.writeFile(target, bytes, { flag: 'wx' });
   return { path: path.relative(realBookRoot, target).split(path.sep).join('/') };
 }
@@ -207,17 +293,33 @@ export async function prunePreviousVersions(root: string, projectId: string, opt
 }
 async function pruneEntries(root: string, projectId: string, suffix: 'draft' | 'previous', options: { keep?: number; olderThanDays?: number; dryRun?: boolean } = {}) {
   const validated = z.object({ keep: z.number().int().min(1).max(20000).optional(), olderThanDays: z.number().finite().nonnegative().optional(), dryRun: z.boolean().optional() }).strict().parse(options);
-  const entries = await listBackupEntries(root, projectId, suffix);
   const directory = await backupDirectory(root, projectId);
+  if (!directory) return { total: 0, pruned: 0, kept: 0, ids: [] as string[] };
+  const identity = await recoveryDirectoryIdentity(root, directory), snapshots = new Map<string, BackupSnapshot>();
+  const entries = await listBackupEntries(root, projectId, suffix, snapshots);
+  if (directory !== await backupDirectory(root, projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory))) throw new Error('备份目录清理前已变化，已停止');
   const pattern = new RegExp(`-${suffix}\\.(docx|txt)$`, 'u');
   const prune = selectDraftsToPrune(entries, validated);
-  if (!validated.dryRun && directory) {
+  if (!validated.dryRun) {
     for (const entry of prune) {
-      if (directory !== await backupDirectory(root, projectId)) throw new Error('备份目录清理期间已变化，已停止');
-      await checkedBackupFile(directory, entry.id);
-      await readBackupMetadata(directory, entry.id, suffix);
-      await fs.rm(path.join(directory, entry.id), { force: true });
-      await fs.rm(path.join(directory, entry.id.replace(pattern, `-${suffix}.meta.json`)), { force: true });
+      const frozen = snapshots.get(entry.id); if (!frozen) throw new Error('备份快照缺失，已停止清理');
+      if (directory !== await backupDirectory(root, projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory))) throw new Error('备份目录清理期间已变化，已停止');
+      const selected = await checkedBackupFile(directory, entry.id);
+      if (!sameStamp(frozen.file, backupStamp(selected.stat)) || !sameMetadataStamp(frozen.metadata, await metadataStamp(directory, entry.id, suffix))) throw new Error('备份或来源记录已变化，已停止清理');
+      const raw = await fs.readFile(selected.file), checked = await checkedBackupFile(directory, entry.id);
+      if (raw.length !== frozen.file.size || !sameStamp(frozen.file, backupStamp(checked.stat))) throw new Error('备份读取期间已变化，已停止清理');
+      const hash = createHash('sha256').update(raw).digest('hex');
+      const final = await fs.readFile(selected.file), finalStat = await checkedBackupFile(directory, entry.id);
+      if (directory !== await backupDirectory(root, projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory))
+        || !sameStamp(frozen.file, backupStamp(finalStat.stat)) || createHash('sha256').update(final).digest('hex') !== hash
+        || !sameMetadataStamp(frozen.metadata, await metadataStamp(directory, entry.id, suffix))) throw new Error('备份或目录在清理前变化，已停止');
+      await fs.unlink(selected.file);
+      // An absent sidecar is not ours to remove if another program creates it.
+      if (frozen.metadata) {
+        if (directory !== await backupDirectory(root, projectId) || !sameRecoveryDirectory(identity, await recoveryDirectoryIdentity(root, directory))
+          || !sameMetadataStamp(frozen.metadata, await metadataStamp(directory, entry.id, suffix))) throw new Error('备份来源记录在清理期间变化，已保留');
+        await fs.unlink(path.join(directory, entry.id.replace(pattern, `-${suffix}.meta.json`)));
+      }
     }
   }
   return { total: entries.length, pruned: prune.length, kept: entries.length - prune.length, ids: prune.map(item => item.id) };

@@ -13,6 +13,7 @@ import { AIConnections } from '../src/main/ai-connections';
 import { AIService } from '../src/main/ai-service';
 import { textDocument } from '../src/main/text-import';
 import type { AITask } from '../src/shared/contracts';
+import { WAIT_LIMIT } from './wait';
 
 const sse = (text: string) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
 const report = (quote: string, replacement: string) => JSON.stringify({ summary: '独立报告', issues: [{ category: '错别字', quote, replacement, reason: '理由', evidence: '' }] });
@@ -101,7 +102,7 @@ test('手动批量审稿：拒绝空/超限/重复连接与跨书报告，且不
   const other = await workspace.createChapter(b.id, textDocument('乙书正文。'));
   const candidate = await service.start({ projectId: b.id, connectionId: ids['mock-r1'], mode: 'write', chapterPath: other.path, sourceHash: other.hash, instruction: '写' });
   assert.equal(candidate.projectId, b.id);
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + WAIT_LIMIT;
   while ((await service.list(b.id)).find(task => task.id === candidate.id)?.status === 'running' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
   await assert.rejects(service.startReviewBatch({ ...request(a.id, chapter, [ids['mock-r1']]), reviewTaskId: candidate.id }), /本书中未找到/u);
   assert.equal(calls.filter(model => model !== 'mock-r1').length, 0); // no reviewer ever ran
@@ -165,7 +166,7 @@ test('手动批量审稿：重叠批次不能清除整批取消，原批次停�
   const gate = new Promise<void>(resolve => { release = resolve; });
   const f = await fixture(t, { beforeReply: model => model === 'mock-r1' ? gate : Promise.resolve() });
   const pending = f.service.startReviewBatch(request(f.a.id, f.chapter, [f.ids['mock-r1'], f.ids['mock-r3']]));
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + WAIT_LIMIT;
   while (!f.calls.length) { if (Date.now() > deadline) throw new Error('首笔模拟请求未启动'); await new Promise(resolve => setTimeout(resolve, 10)); }
   await assert.rejects(f.service.startReviewBatch(request(f.a.id, f.chapter, [f.ids['mock-r3']])), /已有 AI 任务/u);
   const task = (await f.service.list(f.a.id))[0];

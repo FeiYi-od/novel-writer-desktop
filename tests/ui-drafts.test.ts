@@ -41,3 +41,48 @@ test('未保存草稿：空白内容不落盘，清空即删除，损坏文件�
   for (let index = 0; index < 12; index++) huge[`part${index}`] = 'x'.repeat(200_000);
   await assert.rejects(f.store.save(f.a.id, 'style', huge), /2 MiB/u);
 });
+
+test('长 JSON 草稿完整读回，超出总量时拒绝且保留先前版本', async t => {
+  const f = await fixture(t);
+  const value = JSON.stringify({ text: '虚'.repeat(90_000), image: 'a'.repeat(250_000) });
+  await f.store.save(f.a.id, 'characters', { draft: value });
+  const actual = await f.store.read(f.a.id, 'characters');
+  assert.equal(actual?.values.draft, value);
+  assert.deepEqual(JSON.parse(actual!.values.draft), JSON.parse(value));
+  const tooLarge = JSON.stringify({ text: '虚'.repeat(800_000) });
+  await assert.rejects(f.store.save(f.a.id, 'characters', { draft: tooLarge }), /2 MiB/u);
+  assert.equal((await f.store.read(f.a.id, 'characters'))?.values.draft, value);
+});
+
+test('无效或过长字段名不被静默截断并覆盖已有草稿', async t => {
+  const f = await fixture(t);
+  await f.store.save(f.a.id, 'planning', { doc: '原草稿' });
+  await assert.rejects(f.store.save(f.a.id, 'planning', { ['x'.repeat(101)]: '新稿' }), /不受支持/u);
+  assert.equal((await f.store.read(f.a.id, 'planning'))?.values.doc, '原草稿');
+});
+
+test('同页面慢写入不能覆盖后续写入或清空，且失败后队列可继续', async t => {
+  const f = await fixture(t);
+  const native = process.getBuiltinModule('node:fs/promises') as typeof import('node:fs/promises');
+  const original = native.writeFile;
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  let intercepted = false;
+  (native as any).writeFile = async (...args: any[]) => {
+    if (!intercepted && String(args[0]).includes('ui-drafts')) { intercepted = true; entered(); await blocked; }
+    return (original as any)(...args);
+  };
+  try {
+    const first = f.store.save(f.a.id, 'planning', { doc: '旧稿' });
+    await waiting;
+    const second = f.store.save(f.a.id, 'planning', { doc: '新稿' });
+    const clear = f.store.clear(f.a.id, 'planning');
+    release(); await Promise.all([first, second, clear]);
+    assert.equal(await f.store.read(f.a.id, 'planning'), null);
+    await assert.rejects(f.store.save(f.a.id, 'planning', { ['x'.repeat(101)]: '无效' }));
+    await f.store.save(f.a.id, 'planning', { doc: '队列继续' });
+    assert.equal((await f.store.read(f.a.id, 'planning'))?.values.doc, '队列继续');
+  } finally { (native as any).writeFile = original; release(); }
+});

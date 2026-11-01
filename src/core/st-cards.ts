@@ -8,6 +8,7 @@ export interface CardFields {
 export interface StCard { specVersion: 1 | 2 | 3; data: CardFields; characterBook?: StWorldInfo }
 export type SelectiveLogic = 'AND_ANY' | 'NOT_ALL' | 'NOT_ANY' | 'AND_ALL';
 export type EntryPosition = 'before_char' | 'after_char' | 'at_depth';
+export interface WorldCharacterContext { avatarKey: string; tagIds?: string[] }
 export interface CharacterFilter { isExclude: boolean; names: string[]; tags: string[] }
 export interface StWorldEntry {
   id: string; keys: string[]; secondaryKeys: string[]; content: string; comment: string;
@@ -16,7 +17,10 @@ export interface StWorldEntry {
   characterFilter?: CharacterFilter; useProbability?: boolean; extensions?: Record<string, unknown>;
 }
 export interface WorldScanOptions {
-  limit?: number; random?: () => number; characterNames?: string[];
+  limit?: number; random?: () => number; characterNames?: string[]; characterTagIds?: string[];
+  characters?: WorldCharacterContext[];
+  /** AI context can omit entries when the author's original tag map is unavailable. */
+  omitUnknownTagEntries?: boolean;
   /** SillyTavern scans inserted content again, up to this many extra passes. */
   maxRecursion?: number; scanDepth?: number;
 }
@@ -172,11 +176,20 @@ function toCharacterFilter(value: unknown): CharacterFilter | undefined {
   return { isExclude: asBool(filter.isExclude ?? filter.is_exclude), names, tags };
 }
 /** Character filters only apply when the caller tells us which characters are in this scene. */
-function passesFilter(entry: StWorldEntry, characterNames?: string[]) {
+function passesFilter(entry: StWorldEntry, characterNames?: string[], characterTagIds?: string[], omitUnknownTagEntries = false) {
   const filter = entry.characterFilter;
-  if (!filter || !characterNames) return true;
-  const matched = filter.names.some(name => characterNames.includes(name));
-  return filter.isExclude ? !matched : matched;
+  if (!filter) return true;
+  if (filter.tags.length && characterTagIds === undefined && omitUnknownTagEntries) return false;
+  if (filter.names.length && characterNames) {
+    const matched = filter.names.some(name => characterNames.includes(name));
+    if (filter.isExclude ? matched : !matched) return false;
+  }
+  // Undefined means there is no tagMap entry; [] is a known empty tagMap entry.
+  if (filter.tags.length && characterTagIds) {
+    const matched = filter.tags.some(tag => characterTagIds.includes(tag));
+    if (filter.isExclude ? matched : !matched) return false;
+  }
+  return true;
 }
 /** SillyTavern triggers on "any primary key matches"; secondary keys narrow it down by logic.
  * Adds probability, recursion (scan inserted content again) and character filters. */
@@ -212,7 +225,12 @@ export function selectWorldEntries(world: StWorldInfo, text: string, options: Wo
   const chosen: StWorldEntry[] = [];
   const seen = new Set<string>();
   const accept = (entry: StWorldEntry) => {
-    if (seen.has(entry.id) || !passesFilter(entry, config.characterNames) || !rollPass(entry)) return false;
+    const eligible = config.characters?.length
+      ? entry.characterFilter?.isExclude
+        ? config.characters.every(actor => passesFilter(entry, [actor.avatarKey], actor.tagIds, config.omitUnknownTagEntries))
+        : config.characters.some(actor => passesFilter(entry, [actor.avatarKey], actor.tagIds, config.omitUnknownTagEntries))
+      : passesFilter(entry, config.characterNames, config.characterTagIds, config.omitUnknownTagEntries);
+    if (seen.has(entry.id) || !eligible || !rollPass(entry)) return false;
     seen.add(entry.id); chosen.push(entry); return true;
   };
   for (const entry of world.entries) if (!entry.disabled && entry.constant) accept(entry);

@@ -69,7 +69,8 @@ test('TXT 正文读写、外部冲突与非 UTF-8 原件保护，默认新建仍
   const workspace = new Workspace(path.join(root, 'local')); await workspace.initialize(); const folder = path.join(root, 'book'); await fs.mkdir(folder); const project = await workspace.attach(folder);
   assert.match((await workspace.createChapter(project.id)).path, /\.docx$/);
   const doc = await workspace.createChapter(project.id, textDocument('第一段\n第二段'), 'txt');
-  assert.equal(await fs.readFile(path.join(folder, doc.path), 'utf8'), '　　第一段\n\n　　第二段');
+  // TXT 落盘使用单换行分隔（txtText 策略；空段在 061 轮由 txt-roundtrip-061.test.ts 覆盖）。
+  assert.equal(await fs.readFile(path.join(folder, doc.path), 'utf8'), '　　第一段\n　　第二段');
   const saved = await workspace.saveChapter({ projectId: project.id, path: doc.path, expectedHash: doc.hash, content: textDocument('修改的段落') });
   const read = await workspace.readChapter(project.id, saved.path); assert.equal(typeof read.content, 'object');
   if (typeof read.content !== 'string') assert.equal(copyableText(read.content), '　　修改的段落');

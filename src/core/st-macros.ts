@@ -1,6 +1,8 @@
 export interface MacroEnv {
   user?: string; char?: string; description?: string; personality?: string; scenario?: string; persona?: string;
   mesExamples?: string; lastMessage?: string; original?: string;
+  /** Explicit, ephemeral Nicknames-extension preview; absent means unknown macros stay visible. */
+  nicknamePreviewEnabled?: boolean; useNicknameForMacros?: boolean; userNickname?: string; charNickname?: string;
   /** Stable seed so {{pick}} repeats the same choice for the same text (SillyTavern seeds by chat + content + offset). */
   seed?: string;
 }
@@ -65,10 +67,9 @@ export function substituteMacros(text: string, env: MacroEnv = {}, random: () =>
     const items = splitList(list);
     return items.length ? items[Math.floor(random() * items.length)]! : '';
   }, limit);
-  output = boundedReplace(output, /{{pick\s?::?([^}]+)}}/gi, (match, list: string) => {
+  output = boundedReplace(output, /{{pick\s?::?([^}]+)}}/gi, (_match, list: string, offset: number) => {
     const items = splitList(list);
     if (!items.length) return '';
-    const offset = text.indexOf(match);
     const rng = HASH(`${env.seed ?? ''}-${HASH(text)}-${offset}`) / 0xffffffff;
     return items[Math.floor(rng * items.length)]!;
   }, limit);
@@ -77,15 +78,19 @@ export function substituteMacros(text: string, env: MacroEnv = {}, random: () =>
     return value === null ? '' : String(value);
   }, limit);
   output = boundedReplace(output, /{{banned\s+"[^"]*"}}/gi, () => '', limit);
+  const originalUser = env.user ?? '', originalChar = env.char ?? '';
+  const userNickname = env.userNickname?.trim() || originalUser, charNickname = env.charNickname?.trim() || originalChar;
+  const overrideNames = env.nicknamePreviewEnabled === true && env.useNicknameForMacros === true;
   const simple: Record<string, string | undefined> = {
-    user: env.user, char: env.char, description: env.description, personality: env.personality,
+    user: overrideNames ? userNickname : env.user, char: overrideNames ? charNickname : env.char, description: env.description, personality: env.personality,
     scenario: env.scenario, persona: env.persona, mesexamples: env.mesExamples, lastmessage: env.lastMessage, original: env.original
   };
+  if (env.nicknamePreviewEnabled === true) Object.assign(simple, { userfull: originalUser, charfull: originalChar, usernickname: userNickname, charnickname: charNickname });
   output = boundedReplace(output, /{{(\w+)}}/gi, (match, name: string) => {
     const key = name.toLowerCase();
     if (key === 'newline') return '\n';
     if (key === 'trim') return match; // 占位，收尾时统一处理
-    return key in simple ? (simple[key] ?? '') : match;
+    return Object.hasOwn(simple, key) ? (simple[key] ?? '') : match;
   }, limit);
   // {{trim}} removes the surrounding newlines, exactly like the reference implementation.
   output = boundedReplace(output, /[ \t\r\n]*{{trim}}[ \t\r\n]*/gi, () => '', limit);

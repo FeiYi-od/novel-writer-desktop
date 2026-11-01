@@ -2,6 +2,7 @@ import { listenLocalHttp } from './support/local-http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
+import mutableFs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createServer } from 'node:http';
@@ -20,7 +21,8 @@ import type { AIConnection, AIConnectionEdit, AIRequest, AITask } from '../src/s
 const profile = (baseUrl: string): AIConnection => ({ id: randomUUID(), name: '测试模型', model: 'mock', baseUrl, contextWindow: 32768, maxOutputTokens: 2000, tokenParameter: 'max_tokens', adapter: 'generic', thinking: 'default', timeoutSeconds: 30, hasKey: false });
 const edit = (baseUrl: string): AIConnectionEdit => { const { id, hasKey, ...input } = profile(baseUrl); return input; };
 const codec = { encrypt: (text: string) => Buffer.from(text.split('').reverse().join('')), decrypt: (bytes: Buffer) => bytes.toString().split('').reverse().join('') };
-const waitFor = async (check: () => Promise<boolean>) => { const until = Date.now() + 6000; while (!await check()) { if (Date.now() > until) throw new Error('测试等待超时'); await new Promise(resolve => setTimeout(resolve, 20)); } };
+// 等待上限只约束"最终完成"，不是行为断言本身；全量并发时 6 秒会误报，改为可配的长上限。
+const waitFor = async (check: () => Promise<boolean>, limit = Number(process.env.NOVEL_TEST_WAIT_MS ?? 180000)) => { const until = Date.now() + limit; while (!await check()) { if (Date.now() > until) throw new Error(`测试等待超时（${limit}ms）`); await new Promise(resolve => setTimeout(resolve, 20)); } };
 const chunk = (content: string, finish: string | null = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content }, finish_reason: finish }] })}\r\n\r\n`;
 
 async function mockServer() {
@@ -65,6 +67,27 @@ test('AI 连接：密钥单向 UI、地址变更保护、冲突检查、未来�
     await assert.rejects(store.save(edit('https://api.deepseek.com'), snapshot.hash), /版本不支持/);
     assert.equal(await fs.readFile(path.join(root, 'ai-connections.json'), 'utf8'), '{"schemaVersion":99}');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('模型连接备份期间外部修改时拒绝覆盖，旧备份和输入保留', async t => {
+  const root = await fs.mkdtemp(path.resolve('.artifacts/ai-settings-race-'));
+  const file = path.join(root, 'ai-connections.json');
+  const store = new AIConnections(root, codec);
+  const initial = await store.save(edit('https://example.org/v1'), '');
+  const prior = await fs.readFile(file, 'utf8');
+  const external = JSON.stringify({ schemaVersion: 1, connections: [] });
+  const edited = { ...initial.connections[0], name: '虚构本机未保存设置' };
+  const originalWrite = mutableFs.writeFile.bind(mutableFs);
+  let injected = false;
+  t.mock.method(mutableFs, 'writeFile', async (...args: Parameters<typeof mutableFs.writeFile>) => {
+    await originalWrite(...args);
+    if (args[0] === `${file}.backup`) { await originalWrite(file, external); injected = true; }
+  });
+  await assert.rejects(store.save(edited, initial.hash), /保存期间被修改/u);
+  assert.ok(injected, '必须注入在备份写入间隙');
+  assert.equal(await fs.readFile(file, 'utf8'), external);
+  assert.equal(await fs.readFile(`${file}.backup`, 'utf8'), prior);
+  assert.equal(edited.name, '虚构本机未保存设置');
 });
 
 test('国内协议适配与 SSE：DeepSeek、千问参数，分片中文、心跳、推理分离、错误和截断', async () => {

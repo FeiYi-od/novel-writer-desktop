@@ -4,7 +4,7 @@ import { assignVolumeChapters, moveVolumes, removeVolumes } from '../../core/vol
 import type { BookDetails, BookSnapshot, Chapter, Project } from '../../shared/contracts';
 
 export function BookCover({ title, src, small = false }: { title: string; src?: string; small?: boolean }) {
-  return <div className={`cover-art ${small ? 'small' : ''}`}>
+  return <div className={`cover-art ${small ? 'small' : ''}`} title={title}>
     {src ? <img alt={`${title}封面`} src={src} /> : <><span className="cover-line"/><span className="cover-title">{title}</span><span className="cover-caption">NOVEL / STORY</span></>}
   </div>;
 }
@@ -16,17 +16,18 @@ export function Shelf({ projects, books, busy, onOpen, onSave }: {
 }) {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Project | null>(null);
-  const filtered = projects.filter(p => (books[p.id]?.value.title ?? p.name).includes(search));
+  const query = search.trim().toLocaleLowerCase();
+  const filtered = projects.filter(p => (books[p.id]?.value.title ?? p.name).toLocaleLowerCase().includes(query));
   return <section className="library-page">
     <div className="page-title"><div><span className="eyebrow">YOUR PERSONAL LIBRARY</span><h1>我的书架<span>{projects.length} 部作品</span></h1><p>每一个世界，都有自己的书页。</p></div><input aria-label="搜索书架" placeholder="搜索作品名称…" value={search} onChange={e => setSearch(e.target.value)} /></div>
     <div className="shelf-grid">{filtered.map(project => {
       const book = books[project.id]; const title = book?.value.title ?? project.name;
       return <article className="shelf-card" key={project.id}>
         <button className="cover-button" disabled={busy} aria-label={`打开作品 ${title}`} onClick={() => onOpen(project)}><BookCover title={title} src={book?.covers[book.value.cover]} /></button>
-        <div className="card-details"><div className="card-meta">{book?.value.volumes.length ?? 0} 个分集 · DOCX</div><h2>{title}</h2><p>{book?.value.introduction || '为这部小说写一段引言，让故事从这里开始。'}</p><div className="card-actions"><button className="primary" disabled={busy} onClick={() => onOpen(project)}>进入创作 →</button><button disabled={busy || !book} aria-label={`编辑作品 ${title}`} onClick={() => setEditing(project)}>封面与分集</button></div></div>
+        <div className="card-details"><div className="card-meta">{book?.value.volumes.length ?? 0} 个分集</div><h2 title={title}>{title}</h2><p>{book?.value.introduction || '为这部小说写一段引言，让故事从这里开始。'}</p><div className="card-actions"><button className="primary" disabled={busy} onClick={() => onOpen(project)}>进入创作 →</button><button disabled={busy || !book} aria-label={`编辑作品 ${title}`} onClick={() => setEditing(project)}>封面与分集</button></div></div>
       </article>;
     })}</div>
-    {!filtered.length && <div className="empty-library"><b>{projects.length ? '没有找到这部作品' : '你的下一部小说，从这里开始'}</b><p>点击右上角“打开小说文件夹”，将已有作品加入书架。</p></div>}
+    {!filtered.length && <div className="empty-library" role="status"><b>{projects.length ? '没有找到这部作品' : '你的下一部小说，从这里开始'}</b><p>{projects.length ? '试试其他作品名称，或清除搜索条件。' : '点击右上角“打开小说文件夹”，将已有作品加入书架。'}</p>{projects.length > 0 && <button onClick={() => setSearch('')}>清除搜索</button>}</div>}
     {editing && books[editing.id] && <BookEditor key={editing.id} project={editing} snapshot={books[editing.id]} onSave={onSave} onClose={() => setEditing(null)} />}
   </section>;
 }

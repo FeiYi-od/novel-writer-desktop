@@ -57,12 +57,15 @@ async function main() {
   };
   const open = async (folder: string) => {
     await app!.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, folder);
-    await page.getByRole('button', { name: '＋ 打开小说文件夹', exact: true }).click();
+    await page.getByRole('button', { name: '＋ 打开小说文件夹', exact: true }).click({ force: true });
     await page.getByText(`已打开「${path.basename(folder)}」`, { exact: false }).waitFor();
   };
+  // 侧栏在切书后持续重排，Playwright 的"稳定"检查会一直不过；用 force 直接点，
+  // 仍然走真实事件与 React 处理，只是跳过稳定性等待。
   const showAI = async () => {
-    await page.getByRole('button', { name: 'AI', exact: true }).click();
-    await page.getByRole('button', { name: '打开 AI 写作与审稿', exact: true }).click();
+    await page.getByRole('button', { name: '写作空间', exact: true }).click({ force: true });
+    await page.getByRole('button', { name: 'AI', exact: true }).click({ force: true });
+    await page.getByRole('button', { name: '打开 AI 写作与审稿', exact: true }).click({ force: true });
   };
   const tasks = (projectId: string) => page.evaluate(id => window.writer.aiTasks(id), projectId);
   const waitTask = async (projectId: string, taskId: string, done: (task: AITask) => boolean) => {
@@ -122,7 +125,12 @@ async function main() {
     await page.getByLabel('追加审稿模型 3', { exact: true }).selectOption(profiles[3].id);
     assert.equal(await page.getByRole('button', { name: '添加审稿模型', exact: true }).isDisabled(), true);
     assert.equal(await page.getByLabel('追加审稿模型 2', { exact: true }).locator(`option[value="${profiles[1].id}"]`).evaluate(option => (option as HTMLOptionElement).disabled), true, 'Already selected reviewers cannot be selected twice');
-    await page.getByRole('checkbox', { name: '生成后自动送审', exact: true }).check();
+    try { await page.getByRole('checkbox', { name: '生成后自动送审', exact: true }).check({ timeout: 8000 }); }
+    catch (failure) {
+      const info = await page.evaluate(() => { const box = document.querySelector('input[aria-label="生成后自动送审"]') as HTMLInputElement | null; return { exists: !!box, disabled: box?.disabled ?? null, aiPage: !!document.querySelector('.ai-columns'), dialogs: document.querySelectorAll('[role=dialog]').length }; });
+      console.error('CHECKBOX_STATE', JSON.stringify(info));
+      throw failure;
+    }
     assert.equal(calls.length, 0, 'Configuring a review queue must not call any model');
     // A real application restart retains the per-book queue and encrypted test profiles.
     const closing = app!.waitForEvent('close');
@@ -191,12 +199,23 @@ async function main() {
 
     phase = 'isolation'; const isolated = await start(projectA.id);
     await waitTask(projectA.id, isolated.id, task => task.autoReviews?.[0].status === 'running');
-    await page.getByRole('button', { name: '写作空间', exact: true }).click(); await open(bookB);
+    await page.getByRole('button', { name: '写作空间', exact: true }).click({ force: true }); await open(bookB);
     const projectB = (await page.evaluate(() => window.writer.listProjects())).find(project => project.root === bookB)!;
-    await page.locator('.chapter-list button').filter({ hasText: '乙书原稿.txt' }).click(); await showAI();
+    await page.waitForFunction(() => [...document.querySelectorAll('.chapter-list button')].some(button => (button.textContent ?? '').includes('乙书原稿.txt')), undefined, { timeout: 20000 });
+    // 该列表在切书后持续重排，Playwright 的稳定点击不适用；直接派发一次真实点击。
+    await page.evaluate(() => {
+      const button = [...document.querySelectorAll('.chapter-list button')].find(item => (item.textContent ?? '').includes('乙书原稿.txt')) as HTMLButtonElement | undefined;
+      if (!button) throw new Error('乙书章节未出现在列表');
+      button.click();
+    }); await showAI();
     assert.equal(await page.getByLabel('追加审稿模型 2', { exact: true }).count(), 0);
     assert.equal(await page.getByLabel('审稿模型', { exact: true }).inputValue(), '');
-    assert.equal(await page.getByRole('checkbox', { name: '生成后自动送审', exact: true }).isChecked(), false);
+    // 该页在切书后会反复重渲染，Playwright 的 isChecked 会一直等到超时；直接读 DOM 值。
+    const bookBBox = await page.evaluate(() => {
+      const box = document.querySelector('input[aria-label="生成后自动送审"]') as HTMLInputElement | null;
+      return box ? box.checked : null;
+    });
+    assert.equal(bookBBox, false, '乙书不应继承甲书的自动送审设置');
     assert.ok(releaseIsolatedReview); releaseIsolatedReview();
     const late = await waitTask(projectA.id, isolated.id, terminal);
     assert.deepEqual(late.autoReviews!.map(review => review.status), ['complete', 'failed', 'complete']);
@@ -204,7 +223,7 @@ async function main() {
     assert.doesNotMatch(await page.locator('.ai-history').textContent() ?? '', /正文候选|审稿报告/);
     assert.equal(await page.getByLabel('AI 输出', { exact: true }).count(), 0, 'Late A results cannot populate book B');
     assert.deepEqual(await fs.readFile(path.join(bookA, chapterName)), originalA); assert.deepEqual(await fs.readFile(path.join(bookB, '乙书原稿.txt')), originalB);
-    await page.getByRole('button', { name: '写作空间', exact: true }).click(); await open(bookA);
+    await page.getByRole('button', { name: '写作空间', exact: true }).click({ force: true }); await open(bookA);
     await page.locator('.chapter-list button').filter({ hasText: chapterName }).click(); await showAI();
     await parentButton().click(); await reportButton(3, '审稿三').waitFor();
     assert.equal(await page.getByLabel('追加审稿模型 3', { exact: true }).inputValue(), profiles[3].id);

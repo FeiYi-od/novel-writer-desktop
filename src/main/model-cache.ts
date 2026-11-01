@@ -4,11 +4,12 @@ import path from 'node:path';
 export interface CachedModels { models: { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number }[]; checkedAt: string }
 export const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Small on-disk cache so opening the settings page does not hit every provider again. Keyed by
- * protocol + base URL (never by the API key), and expired entries are ignored. */
+ * protocol + base URL for anonymous requests only; expired and legacy entries are ignored. */
 export class ModelCache {
   private memory: Record<string, CachedModels> | null = null;
   constructor(private readonly file: string, private readonly now: () => number = () => Date.now()) {}
-  static key(adapter: string, baseUrl: string) { return `${adapter}|${baseUrl}`; }
+  // Earlier versions mixed authenticated and anonymous lists. Never reuse them.
+  static key(adapter: string, baseUrl: string) { return `anonymous-v2|${adapter}|${baseUrl}`; }
   private async load() {
     if (this.memory) return this.memory;
     try { this.memory = JSON.parse(await fs.readFile(this.file, 'utf8')) as Record<string, CachedModels>; }

@@ -46,6 +46,32 @@ test('宏预览：lastMessage 与 user 可用，未知宏保留', async t => {
   assert.equal(preview.applied, preview.expanded, '没有脚本时不改动文本');
 });
 
+test('社区昵称宏：本书一次性预览通过受限Worker，禁用时保持原文且不写入资料', async t => {
+  const f = await fixture(t), text = '{{userFull}}|{{charFull}}|{{userNickname}}|{{charNickname}}|{{user}}|{{char}}';
+  const context = { userName: '作者甲', characterName: '林岚', userNickname: '阿甲', characterNickname: '小岚', nicknamePreviewEnabled: true, useNicknameForMacros: true };
+  const first = await f.store.preview(f.project.id, text, context as any);
+  assert.equal(first.projectId, f.project.id); assert.equal(first.expanded, '作者甲|林岚|阿甲|小岚|阿甲|小岚');
+  const disabled = await f.store.preview(f.project.id, text, { ...context, nicknamePreviewEnabled: false } as any);
+  assert.equal(disabled.expanded, '{{userFull}}|{{charFull}}|{{userNickname}}|{{charNickname}}|作者甲|林岚');
+  assert.deepEqual(await f.store.read(f.project.id), [], '一次预览不保存插件设置或脚本');
+  await assert.rejects(f.store.preview(f.project.id, text, { ...context, userNickname: 'x'.repeat(513) } as any));
+  await assert.rejects(f.store.preview(f.project.id, text, { ...context, useNicknameForMacros: 'yes' } as any));
+});
+
+test('社区昵称宏：预览时昵称和开关被冻结，不随另一本小说的操作变化', async t => {
+  const f = await fixture(t), workspace = (f.store as unknown as { workspace: Workspace }).workspace;
+  const otherRoot = path.join(f.root, '乙'); await fs.mkdir(otherRoot); const other = await workspace.attach(otherRoot);
+  const read = workspace.readNotes.bind(workspace); let resume!: () => void;
+  const gate = new Promise<void>(resolve => { resume = resolve; });
+  workspace.readNotes = async id => { await gate; return read(id); };
+  const context = { userName: '甲作者', characterName: '甲角色', characterNickname: '甲昵称', nicknamePreviewEnabled: true, useNicknameForMacros: true };
+  const pending = f.store.preview(f.project.id, '{{charFull}}/{{charNickname}}/{{char}}', context);
+  context.characterNickname = '另一本昵称'; context.nicknamePreviewEnabled = false;
+  resume(); const result = await pending;
+  assert.equal(result.projectId, f.project.id); assert.equal(result.expanded, '甲角色/甲昵称/甲昵称');
+  assert.equal((await f.store.preview(other.id, '{{charNickname}}/{{char}}', { characterName: '乙角色' })).expanded, '{{charNickname}}/乙角色');
+});
+
 test('正则导入：保留空/非法显式flags，非法脚本不会退回默认改写', async t => {
   const f = await fixture(t);
   const scripts = await f.store.import(f.project.id, [

@@ -8,6 +8,7 @@ export function Memories({ projectId, manuscript, connections, blocked, onDirty 
   const [autoSummary, setAutoSummary] = useState(false);
   // The summary confirmation draft survives an exit; restoring stays an explicit action.
   const [restorable, setRestorable] = useState<UiDraft | null>(null);
+  const [draftError, setDraftError] = useState('');
   const draftLoaded = useRef(false);
   const [factKind, setFactKind] = useState<'fact' | 'foreshadow'>('fact'); const [factText, setFactText] = useState(''); const [factUseSource, setFactUseSource] = useState(true);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null); const alive = useRef(true);
@@ -54,7 +55,7 @@ export function Memories({ projectId, manuscript, connections, blocked, onDirty 
   }, [projectId]);
   useEffect(() => {
     if (!draftLoaded.current || !dirty) return;
-    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'summary', { doc: JSON.stringify({ preview, draftTask }) }).catch(() => {}); }, 800);
+    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'summary', { doc: JSON.stringify({ preview, draftTask }) }).then(() => setDraftError('')).catch(e => setDraftError('未保存草稿自动备份失败，请保留当前页面并先保存或复制内容：' + String(e))); }, 800);
     return () => clearTimeout(timer);
   }, [dirty, projectId, preview, draftTask]);
   const restoreDraft = () => {
@@ -76,7 +77,7 @@ export function Memories({ projectId, manuscript, connections, blocked, onDirty 
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(''); setMessage(''); try { await action(); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const task = tasks.find(t => t.id === selected) ?? tasks[0]; const running = tasks.some(t => t.status === 'running');
   return <section className="ai-page"><header className="ai-heading"><div><small>STORY MEMORY</small><h1>章节摘要与故事记忆</h1><p>已保存正文 → 独立模型摘要 → 作者核对 → 确认后用于本书 AI。</p></div></header>
-    {error && <div role="alert" className="error">{error}</div>}{message && <p role="status">{message}</p>}
+    {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}{message && <p role="status">{message}</p>}
     <div className="ai-columns"><aside className="ai-panel ai-form"><h2>生成章节摘要</h2><p>当前章节：{manuscript?.path ?? '请先在写作空间打开章节'}</p>
       <label>摘要模型<select aria-label="摘要模型" value={model} disabled={busy || running} onChange={e => { setModel(e.target.value); localStorage.setItem(`summary-model:${projectId}`, e.target.value); }}><option value="">选择独立摘要连接</option>{connections.map(c => <option key={c.id} value={c.id}>{c.name} · {c.model}</option>)}</select></label>
       <label className="ai-check"><input type="checkbox" aria-label="保存章节后自动生成摘要草稿" checked={autoSummary} disabled={busy} onChange={e => { setAutoSummary(e.target.checked); localStorage.setItem(`auto-summary:${projectId}`, String(e.target.checked)); }} />保存章节后自动生成摘要草稿（只生成草稿，不自动确认，也不会自动启用进故事记忆）</label>

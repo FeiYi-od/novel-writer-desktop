@@ -18,6 +18,7 @@ import { ChapterConfirmationStore } from '../src/main/chapter-confirmation';
 import { KnowledgeService } from '../src/main/knowledge-service';
 import { copyableText, normalizeParagraphs } from '../src/core/typography';
 import type { AIRequest, AITask, KnowledgeCitationReference, RichNode } from '../src/shared/contracts';
+import { WAIT_LIMIT } from './wait';
 
 const richDocument: RichNode = { type: 'doc', content: [
   { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '第一集 夜雨', marks: [{ type: 'bold' }] }] },
@@ -31,7 +32,7 @@ const report = JSON.stringify({ summary: '虚构文本本地测试', issues: [
 ] });
 const sse = (text: string) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
 const until = async (check: () => Promise<boolean>) => {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + WAIT_LIMIT;
   while (!await check()) { if (Date.now() > deadline) throw new Error('等待格式审稿测试超时'); await new Promise(resolve => setTimeout(resolve, 10)); }
 };
 

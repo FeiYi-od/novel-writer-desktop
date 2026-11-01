@@ -13,6 +13,9 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [search, setSearch] = useState('');
   const [restored, setRestored] = useState(false);
+  const [needsImportReselect, setNeedsImportReselect] = useState(false);
+  const [needsPortraitReselect, setNeedsPortraitReselect] = useState(false);
+  const [draftError, setDraftError] = useState('');
   const [notice, setNotice] = useState('');
   const [merging, setMerging] = useState<string | null>(null);
   const pending = useRef(false); const tokens = useRef(new Set<string>());
@@ -26,7 +29,7 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
       if (!live) return;
       draftLoaded.current = true;
       const text = value?.values.draft; if (!text) return;
-      try { const parsed = JSON.parse(text) as Draft; if (parsed?.edit?.fields) { setDraft(parsed); setRestored(true); } }
+      try { const parsed = JSON.parse(text) as Draft; if (parsed?.edit?.fields) { setDraft(parsed); setRestored(true); setNeedsImportReselect(Boolean(parsed.edit.importToken)); setNeedsPortraitReselect(Boolean(parsed.edit.portraitToken)); } }
       catch { /* keep the file; never adopt unreadable input automatically */ }
     }).catch(() => { draftLoaded.current = true; });
     return () => { live = false; };
@@ -34,17 +37,29 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
   useEffect(() => {
     if (!draftLoaded.current) return;
     if (!draft) { void window.writer.clearUiDraft(projectId, 'characters').catch(() => {}); return; }
-    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'characters', { draft: JSON.stringify(draft) }).catch(() => {}); }, 800);
+    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'characters', { draft: JSON.stringify(draft) }).then(() => setDraftError('')).catch(e => setDraftError('未保存草稿自动备份失败，请保留当前页面并先保存或复制内容：' + String(e))); }, 800);
     return () => clearTimeout(timer);
   }, [draft, projectId]);
   async function action(fn: () => Promise<void>) {
     if (pending.current) return; pending.current = true; setBusy(true); setError('');
-    try { await fn(); } catch (e) { setError(String(e)); } finally { pending.current = false; setBusy(false); }
+    try { await fn(); } catch (e) {
+      if (String(e).includes('导入预览已过期')) { setNeedsImportReselect(Boolean(draft?.edit.importToken)); setNeedsPortraitReselect(Boolean(draft?.edit.portraitToken)); }
+      setError(String(e));
+    } finally { pending.current = false; setBusy(false); }
   }
   async function importCard(kind: 'image' | 'text') {
     if (!snapshot) return;
     const next = await window.writer.previewCharacter(projectId, kind);
     if (next) { tokens.current.add(next.token); setDraft({ edit: { fields: next.fields, enabled: false, importToken: next.token }, hash: snapshot.hash, image: next.image, warnings: next.warnings, format: next.format }); }
+  }
+  async function reselectImport(kind: 'image' | 'text') {
+    if (!draft?.edit.importToken) return;
+    const next = await window.writer.previewCharacter(projectId, kind);
+    if (!next) return;
+    await window.writer.releaseCharacterImport(projectId, draft.edit.importToken);
+    tokens.current.delete(draft.edit.importToken); tokens.current.add(next.token);
+    setDraft({ ...draft, edit: { ...draft.edit, importToken: next.token }, image: draft.edit.portraitToken || draft.edit.removePortrait ? draft.image : next.image, format: next.format, warnings: next.warnings });
+    setNeedsImportReselect(false);
   }
   function editCard(card: CharacterCard) {
     const fields = emptyCharacter();
@@ -53,13 +68,13 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
   }
   async function releaseDraft() {
     for (const token of tokens.current) await window.writer.releaseCharacterImport(projectId, token);
-    tokens.current.clear(); setDraft(null);
+    tokens.current.clear(); setDraft(null); setNeedsImportReselect(false); setNeedsPortraitReselect(false);
   }
   const cards = snapshot?.value.cards ?? [];
   const context = characterContext(projectId, cards);
   return <section className="characters-page">
     <div className="page-title"><div><span className="eyebrow">CHARACTER LIBRARY</span><h1>角色库<span>{title}</span></h1><p>图片卡与文字卡统一管理，多位角色可同时用于本书。</p></div><span className="studio-badge">{cards.length} 位角色 · {context.length} 位启用</span></div>
-    {error && <div role="alert" className="error">{error}</div>}
+    {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}
     <div className="character-toolbar"><input aria-label="搜索角色" placeholder="搜索角色名称…" value={search} onChange={e => setSearch(e.target.value)} /><div className="actions">
       <button disabled={busy} onClick={() => void action(async () => setSnapshot(await window.writer.readCharacters(projectId)))}>重新载入角色库</button>
       <button disabled={busy || !snapshot} onClick={() => void action(() => importCard('image'))}>导入图片角色卡</button>
@@ -87,16 +102,18 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
       <header><div><span className="eyebrow">{draft.edit.importToken ? 'IMPORT PREVIEW' : 'CHARACTER DETAILS'}</span><h2>{draft.edit.importToken ? '确认导入角色卡' : draft.edit.id ? '编辑角色卡' : '新建文字角色卡'}</h2></div><span>归属：{title}</span></header>
       <div className="character-form"><aside><div className="character-portrait large">{draft.image ? <img src={draft.image} alt="角色卡预览" /> : <span>人</span>}</div><button disabled={busy} onClick={() => void action(async () => {
         const portrait = await window.writer.chooseCharacterPortrait(projectId);
-        if (portrait) { if (draft.edit.portraitToken) { await window.writer.releaseCharacterImport(projectId, draft.edit.portraitToken); tokens.current.delete(draft.edit.portraitToken); } tokens.current.add(portrait.token); setDraft({ ...draft, image: portrait.image, edit: { ...draft.edit, portraitToken: portrait.token, removePortrait: false } }); }
-      })}>选择角色头像</button><button disabled={busy || !draft.image} onClick={() => setDraft({ ...draft, image: '', edit: { ...draft.edit, removePortrait: true } })}>移除头像</button><p>{draft.format} · 角色资料</p><label><input type="checkbox" checked={draft.edit.enabled} disabled={busy} onChange={e => setDraft({ ...draft, edit: { ...draft.edit, enabled: e.target.checked } })} />确认用于本书</label><small>导入默认不启用。可与本书其他图片卡、文字卡一起勾选使用。</small></aside>
+        if (portrait) { if (draft.edit.portraitToken) { await window.writer.releaseCharacterImport(projectId, draft.edit.portraitToken); tokens.current.delete(draft.edit.portraitToken); } tokens.current.add(portrait.token); setDraft({ ...draft, image: portrait.image, edit: { ...draft.edit, portraitToken: portrait.token, removePortrait: false } }); setNeedsPortraitReselect(false); }
+      })}>选择角色头像</button><button disabled={busy || !draft.image} onClick={() => void action(async () => { if (draft.edit.portraitToken) { await window.writer.releaseCharacterImport(projectId, draft.edit.portraitToken); tokens.current.delete(draft.edit.portraitToken); } setDraft({ ...draft, image: '', edit: { ...draft.edit, portraitToken: undefined, removePortrait: true } }); setNeedsPortraitReselect(false); })}>移除头像</button><p>{draft.format} · 角色资料</p><label><input type="checkbox" checked={draft.edit.enabled} disabled={busy} onChange={e => setDraft({ ...draft, edit: { ...draft.edit, enabled: e.target.checked } })} />确认用于本书</label><small>导入默认不启用。可与本书其他图片卡、文字卡一起勾选使用。</small></aside>
       <div className="character-fields"><p className="notice">{draft.edit.importToken ? '确认后会新增独立角色，不覆盖同名角色；原卡片与未知扩展一并保存。' : '编辑基础字段不会改写原卡片文件。'}</p>
         {restored && <p className="notice" role="status">已恢复上次未保存的角色编辑，保存后才会写入角色库。<button disabled={busy} onClick={() => void action(releaseDraft)}>放弃这次编辑</button></p>}
+        {needsImportReselect && <div className="notice" role="alert">导入原卡的临时数据已失效。请重新选择原来的角色卡，核对文件后再确认；已编辑的字段会保留，原卡和扩展将以本次所选文件为准。<div className="actions"><button disabled={busy} onClick={() => void action(() => reselectImport('image'))}>重新选择图片角色卡</button><button disabled={busy} onClick={() => void action(() => reselectImport('text'))}>重新选择文字角色卡</button></div></div>}
+        {needsPortraitReselect && <p className="notice" role="alert">头像的临时数据已失效，请重新选择角色头像，或移除头像后再保存。</p>}
         {draft.warnings.map((warning, i) => <p className="notice" key={i}>{warning}</p>)}
         {labels.map(([key, label]) => <label key={key}>{label}{key === 'name' ? <input aria-label={label} maxLength={200} disabled={busy} value={draft.edit.fields[key]} onChange={e => setDraft({ ...draft, edit: { ...draft.edit, fields: { ...draft.edit.fields, [key]: e.target.value } } })} /> : <textarea aria-label={label} maxLength={100000} disabled={busy} value={draft.edit.fields[key]} onChange={e => setDraft({ ...draft, edit: { ...draft.edit, fields: { ...draft.edit.fields, [key]: e.target.value } } })} />}</label>)}
         {!!draft.edit.fields.alternateGreetings.length && <details><summary>候选开场白（{draft.edit.fields.alternateGreetings.length} 条，原样保留）</summary>{draft.edit.fields.alternateGreetings.map((text, i) => <pre key={i}>{text}</pre>)}</details>}
       </div></div>
       {error && <div role="alert" className="error">{error}</div>}
-      <footer><button disabled={busy} onClick={() => { if (window.confirm('关闭并放弃当前角色编辑？')) void action(releaseDraft); }}>取消</button><button className="primary" disabled={busy || !draft.edit.fields.name.trim()} onClick={() => void action(async () => { const next = await window.writer.saveCharacter(projectId, draft.edit, draft.hash); setSnapshot(next); await releaseDraft(); })}>{busy ? '保存中…' : draft.edit.importToken ? '确认导入' : '保存角色卡'}</button></footer>
+      <footer><button disabled={busy} onClick={() => { if (window.confirm('关闭并放弃当前角色编辑？')) void action(releaseDraft); }}>取消</button><button className="primary" disabled={busy || needsImportReselect || needsPortraitReselect || !draft.edit.fields.name.trim()} onClick={() => void action(async () => { const next = await window.writer.saveCharacter(projectId, draft.edit, draft.hash); setSnapshot(next); await releaseDraft(); })}>{busy ? '保存中…' : draft.edit.importToken ? '确认导入' : '保存角色卡'}</button></footer>
     </section></div>}
   </section>;
 }

@@ -89,6 +89,9 @@ export function App() {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateVersion, setUpdateVersion] = useState('');
   const [worldOpen, setWorldOpen] = useState<string | null>(null);
+  const [mappingDirty, setMappingDirty] = useState(false);
+  const [mappingBusy, setMappingBusy] = useState(false);
+  const [pluginBusy, setPluginBusy] = useState(false);
   const [macroOpen, setMacroOpen] = useState<string | null>(null);
   const [nasOpen, setNasOpen] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
@@ -170,12 +173,13 @@ export function App() {
     for (const result of results) { if (result.status === 'fulfilled') updateBook(result.value); else setError(String(result.reason)); }
   }).catch(e => setError(String(e))); }, [updateBook]);
   useEffect(() => {
-    const prevent = (event: BeforeUnloadEvent) => { if (dirty || notesDirty || auxDirty || charactersDirty || aiSettingsDirty || materialsDirty || detectionDirty || planningDirty || memoryDirty || knowledgeBusy || confirmationBusy || orderDirty || fidelityDirty || busy || autoSaving || materialSyncBusy) { event.preventDefault(); event.returnValue = ''; } };
+    const prevent = (event: BeforeUnloadEvent) => { if (dirty || notesDirty || auxDirty || charactersDirty || aiSettingsDirty || materialsDirty || detectionDirty || planningDirty || memoryDirty || knowledgeBusy || confirmationBusy || orderDirty || fidelityDirty || busy || autoSaving || materialSyncBusy || mappingDirty || mappingBusy || pluginBusy) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', prevent);
     return () => window.removeEventListener('beforeunload', prevent);
-  }, [dirty, notesDirty, auxDirty, charactersDirty, aiSettingsDirty, materialsDirty, detectionDirty, planningDirty, memoryDirty, knowledgeBusy, confirmationBusy, orderDirty, fidelityDirty, busy, autoSaving, materialSyncBusy]);
+  }, [dirty, notesDirty, auxDirty, charactersDirty, aiSettingsDirty, materialsDirty, detectionDirty, planningDirty, memoryDirty, knowledgeBusy, confirmationBusy, orderDirty, fidelityDirty, busy, autoSaving, materialSyncBusy, mappingDirty, mappingBusy, pluginBusy]);
 
   function discard() {
+    if (mappingDirty || mappingBusy || pluginBusy) { setError('酒馆关联或插件检查仍在处理，请先完成。'); return false; }
     const accepted = (!dirty && !notesDirty && !auxDirty && !charactersDirty && !materialsDirty && !detectionDirty && !planningDirty && !memoryDirty && !orderDirty && !fidelityDirty) || window.confirm('当前有未保存的正文或资料，确定放弃修改并切换吗？');
     if (accepted) { setFidelityTarget(null); setFidelityDirty(false); }
     return accepted;
@@ -203,14 +207,15 @@ export function App() {
   async function refreshMaterials(snapshot: MaterialSyncSnapshot) {
     const id = snapshot.projectId;
     const [freshNotes, book] = await Promise.all([window.writer.readNotes(id), window.writer.readBook(id)]);
+    if (freshNotes.value.projectId !== id || book.value.projectId !== id || activeIdRef.current !== id)
+      throw new Error('资料刷新期间小说或结果归属已变化，请重新打开本书');
     updateBook(book);
-    if (activeIdRef.current !== id) return;
     setNotes(freshNotes); setNotesDirty(false); setCitationSelection(null);
     setCharacterRevision(value => value + 1); setMaterialRevision(value => value + 1);
-    setMessage('固定资料已与书内传输快照核对；外部客户端的传输状态请在客户端查看');
+    setMessage('本书固定资料已重新读取；同步和外部客户端传输状态请分别核对');
   }
   async function beforeMaterialSync() {
-    if (pending.current || busy || autoSaving || dirty || notesDirty || auxDirty || charactersDirty || materialsDirty || planningDirty || memoryDirty || detectionDirty || orderDirty || fidelityDirty || knowledgeBusy || confirmationBusy || renameTarget)
+    if (pending.current || busy || autoSaving || dirty || notesDirty || auxDirty || charactersDirty || materialsDirty || planningDirty || memoryDirty || detectionDirty || orderDirty || fidelityDirty || knowledgeBusy || confirmationBusy || renameTarget || mappingDirty || mappingBusy || pluginBusy)
       throw new Error('请先保存正文和各页资料、完成当前操作，再同步固定资料');
     exitSaves.assertClean('固定资料同步');
   }
@@ -256,11 +261,11 @@ export function App() {
     }
   }
   async function saveAndExit() {
-    if (pending.current || autoSaving || exiting || materialSyncBusy) return;
+    if (pending.current || autoSaving || exiting || materialSyncBusy || mappingBusy || pluginBusy) return;
     let token: string | null = null;
     let synchronized: MaterialSyncSnapshot | null = null;
     try {
-      if (auxDirty || charactersDirty || materialsDirty || detectionDirty || planningDirty || memoryDirty || orderDirty || renameTarget) throw new Error('其他页面或弹窗有未保存内容，请先保存或确认；未确认的AI资料不会自动采用');
+      if (auxDirty || charactersDirty || materialsDirty || detectionDirty || planningDirty || memoryDirty || orderDirty || renameTarget || mappingDirty) throw new Error('其他页面或弹窗有未保存内容，请先保存或确认；未确认的AI资料不会自动采用');
       const plan = exitSaves.preflight();
       const target = document; const content = dirty && draft.current ? structuredClone(draft.current) : null;
       const targetNotes = notesDirty && notes ? structuredClone(notes) : null;
@@ -362,7 +367,7 @@ export function App() {
     {nasOpen && <NasPanel projectId={active?.id} onClose={() => setNasOpen(false)} />}
     {styleHistoryOpen && <StyleHistoryPanel key={styleHistoryOpen} projectId={styleHistoryOpen} styles={activeBook?.value.styles.map(style => ({ id: style.id, name: style.name, rules: style.rules })) ?? []} blocked={busy || autoSaving} onClose={() => setStyleHistoryOpen(null)} />}
     {macroOpen && <MacroPanel key={macroOpen} projectId={macroOpen} sampleText={document && typeof document.content !== 'string' ? copyableText(document.content).split('\n')[0] ?? '' : ''} blocked={busy || autoSaving} onClose={() => setMacroOpen(null)} />}
-    {worldOpen && <WorldInfoPanel key={worldOpen} projectId={worldOpen} sampleText={document && typeof document.content !== 'string' ? copyableText(document.content) : ''} characterNames={(activeBook?.value.styles ?? []).length >= 0 ? [] : []} blocked={busy || autoSaving} onClose={() => setWorldOpen(null)} />}
+    {worldOpen && <WorldInfoPanel key={worldOpen} projectId={worldOpen} sampleText={document?.projectId === worldOpen && typeof document.content !== 'string' ? copyableText(document.content) : ''} blocked={busy || autoSaving} onMappingDirty={setMappingDirty} onMappingBusy={setMappingBusy} onPluginBusy={setPluginBusy} onClose={() => { if (!mappingDirty && !mappingBusy && !pluginBusy) setWorldOpen(null); }} />}
     {usageOpen && <UsagePanel onClose={() => setUsageOpen(false)} />}
     {updateOpen && <UpdatePanel currentVersion={updateVersion} onCheck={token => window.writer.checkUpdate(token || undefined)} onOpenPage={() => window.writer.openUpdatePage()} onClose={() => setUpdateOpen(false)} />}
     {sceneOpen && <SceneAnalysisPanel document={document} title={chapters.find(chapter => chapter.path === document?.path)?.name ?? '当前章节'} onClose={() => setSceneOpen(false)} />}
@@ -415,7 +420,7 @@ export function App() {
       <button data-testid="usage-open" onClick={() => setUsageOpen(true)}>用量统计</button>
       <button data-testid="update-open" disabled={exiting} onClick={() => { setUpdateOpen(true); void window.writer.updateVersion().then(setUpdateVersion).catch(() => setError('无法读取当前版本，请重启应用后重试')); }}>检查更新</button>
       <button className={view === 'knowledge' ? 'active' : ''} disabled={!active || busy} onClick={() => setView('knowledge')}>知识检索</button>
-      <button className="save-exit" disabled={busy || autoSaving || exiting || materialSyncBusy} onClick={() => void saveAndExit()}>保存并退出</button>
+      <button className="save-exit" disabled={busy || autoSaving || exiting || materialSyncBusy || mappingBusy || pluginBusy} onClick={() => void saveAndExit()}>保存并退出</button>
       <button className="primary" disabled={busy || autoSaving} onClick={() => {
         if (!discard()) return;
         void run(async () => { const p = await window.writer.openProject(); if (p) { setProjects(await window.writer.listProjects()); await selectProject(p); } });

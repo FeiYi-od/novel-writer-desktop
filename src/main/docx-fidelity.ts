@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import type { DocxStructureAction, DocxStructureHeader, DocxStructureTable } from '../shared/docx-structure';
+import type { DocxBodyAction, DocxBodyParagraph } from '../shared/docx-body';
 
 export interface RewriteResult { bytes: Uint8Array; paragraphs: number; changed: number }
 const escapeXml = (value: string) => value.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
@@ -174,6 +175,131 @@ function styleSafe(node: XmlElement) { return descendants([node]).every(child =>
 function plainParagraph(node: XmlElement) {
   return node.name === 'w:p' && node.children.every(child => child.name === 'w:pPr' ? styleSafe(child) : child.name === 'w:r' && child.children.every(run => run.name === 'w:rPr' ? styleSafe(run) : run.name === 'w:t' && run.children.length === 0));
 }
+
+const BODY_TEXT_BYTES = 8 * 1024 * 1024;
+const bodyRangeMarker = /^w:(?:fldChar|(?:moveFrom|moveTo|customXml\w*)Range(?:Start|End))$/u;
+/** Bookmark/comment/permission ranges may enclose otherwise plain paragraphs.
+ * Preserve their meaning by permitting edits only when each pair is wholly
+ * within one paragraph; malformed, duplicate or cross-paragraph pairs make
+ * the body read-only. */
+function hasCrossParagraphRanges(xml: string, nodes: XmlElement[]) {
+  const open = new Map<string, XmlElement>(), closed = new Set<string>();
+  for (const node of nodes) {
+    const marker = /^w:(bookmark|commentRange|perm)(Start|End)$/u.exec(node.name);
+    if (!marker) continue;
+    const id = /(?:^|\s)w:id\s*=\s*(["'])(-?\d+)\1/u.exec(xml.slice(node.start, node.openEnd))?.[2];
+    let paragraph = node.parent;
+    while (paragraph && paragraph.name !== 'w:p') paragraph = paragraph.parent;
+    if (id === undefined || !paragraph) return true;
+    const key = `${marker[1]}:${id}`;
+    if (marker[2] === 'Start') {
+      if (open.has(key) || closed.has(key)) return true;
+      open.set(key, paragraph);
+    } else {
+      if (open.get(key) !== paragraph) return true;
+      open.delete(key); closed.add(key);
+    }
+  }
+  return open.size !== 0;
+}
+function bodyNodes(xml: string) {
+  const roots = xmlElements(xml), root = roots.length === 1 ? roots[0] : undefined;
+  const bodies = root?.children.filter(node => node.name === 'w:body') ?? [];
+  if (root?.name !== 'w:document' || bodies.length !== 1) throw new Error('DOCX 正文根结构损坏，请用 Word/WPS 处理');
+  const all = descendants(roots);
+  return { nodes: all.filter(node => node.name === 'w:p' && !hasAncestor(node, 'w:tbl') && !hasAncestor(node, 'w:p')),
+    complexRange: all.some(node => bodyRangeMarker.test(node.name)) || hasCrossParagraphRanges(xml, all), body: bodies[0] };
+}
+function checkedBodyText(text: string) {
+  if (typeof text !== 'string' || text.length > 100000) throw new Error('正文单段超过100000字符或格式无效');
+  for (const char of text) if (!validXmlCodePoint(char.codePointAt(0)!)) throw new Error('段落含不支持的 XML 字符');
+  return Buffer.byteLength(text);
+}
+function bodyDescriptors(xml: string, scan = bodyNodes(xml)): DocxBodyParagraph[] {
+  if (scan.nodes.length > 10000) throw new Error('正文段落超过10000段，请分批处理');
+  let bytes = 0;
+  return scan.nodes.map((node, index) => {
+    const text = paragraphText(xml.slice(node.start, node.end)); bytes += checkedBodyText(text);
+    if (bytes > BODY_TEXT_BYTES) throw new Error('正文文字超过8 MiB，请分批处理');
+    const direct = node.parent === scan.body;
+    const reason = scan.complexRange ? '文档含跨段域或修订范围，正文只读，请用 Word/WPS 编辑'
+      : !direct ? '段落位于内容控件或其他容器内，正文只读，请用 Word/WPS 编辑'
+      : !plainParagraph(node) ? '段落含图片、域、书签、超链接、修订或其他复杂结构，只能在旁边插入新段' : undefined;
+    return { index, text, editable: reason === undefined, removable: reason === undefined, insertable: direct && !scan.complexRange, reason };
+  });
+}
+/** Source identity is retained even when the UI inserts or deletes a middle paragraph. */
+export function bodyStructureParagraphs(xml: string): DocxBodyParagraph[] { return bodyDescriptors(xml); }
+
+function bodyActions(actions: DocxBodyAction[]) {
+  if (!Array.isArray(actions) || !actions.length || actions.length > 10200) throw new Error('正文编辑动作需要1至10200项');
+  let textBytes = 0, structural = 0;
+  const mutations = new Set<number>();
+  for (const action of actions) {
+    if (!action || !Number.isSafeInteger(action.index) || action.index < 0 || action.index > 9999) throw new Error('正文原段索引无效');
+    const keys = action.kind === 'insert' ? ['kind', 'index', 'position', 'paragraphs'] : action.kind === 'update' ? ['kind', 'index', 'text'] : action.kind === 'remove' ? ['kind', 'index'] : [];
+    if (!keys.length || Object.keys(action).some(key => !keys.includes(key))) throw new Error('正文编辑动作格式不受支持');
+    if (action.kind === 'insert') {
+      if (!['before', 'after'].includes(action.position) || !Array.isArray(action.paragraphs) || !action.paragraphs.length || action.paragraphs.length > 200) throw new Error('插入位置或段落数量无效');
+      structural += action.paragraphs.length;
+      for (const text of action.paragraphs) textBytes += checkedBodyText(text);
+    } else {
+      if (mutations.has(action.index)) throw new Error('同一原段不能重复修改、重复删除或同时修改与删除');
+      mutations.add(action.index);
+      if (action.kind === 'update') textBytes += checkedBodyText(action.text); else structural++;
+    }
+    if (structural > 200) throw new Error('一次插入与删除合计不能超过200段');
+    if (textBytes > BODY_TEXT_BYTES) throw new Error('整批改写文字超过8 MiB，请分批处理');
+  }
+}
+function defaultBodyParagraph(text: string) {
+  // New content uses application defaults, never clones IDs, numbering, sections or field state.
+  return `<w:p><w:r><w:rPr><w:rFonts w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体" w:cs="宋体"/><w:sz w:val="21"/><w:szCs w:val="21"/></w:rPr><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
+}
+/** Apply a bounded plan against original XML offsets. Unchanged paragraphs, gaps and ZIP parts stay byte-for-byte intact. */
+export async function editDocxBody(bytes: Uint8Array, input: DocxBodyAction[]): Promise<RewriteResult> {
+  const actions = structuredClone(input); bodyActions(actions);
+  const zip = await JSZip.loadAsync(bytes), entry = zip.file('word/document.xml');
+  if (!entry) throw new Error('这不是可编辑的 Word 文档（缺少 word/document.xml）');
+  let xml: string;
+  try { xml = new TextDecoder('utf-8', { fatal: true }).decode(await entry.async('uint8array')); }
+  catch { throw new Error('DOCX XML 不是有效 UTF-8，请用 Word/WPS 处理'); }
+  const scan = bodyNodes(xml), descriptors = bodyDescriptors(xml, scan);
+  const changes = new Map<number, Extract<DocxBodyAction, { kind: 'update' | 'remove' }>>();
+  const before = new Map<number, string[]>(), after = new Map<number, string[]>();
+  let count = scan.nodes.length, changed = 0;
+  for (const action of actions) {
+    const descriptor = descriptors[action.index];
+    if (!descriptor) throw new Error(`原稿第 ${action.index + 1} 段不存在`);
+    if (action.kind === 'insert') {
+      if (!descriptor.insertable) throw new Error(descriptor.reason ?? '该段旁边不能插入正文');
+      const target = action.position === 'before' ? before : after;
+      target.set(action.index, [...(target.get(action.index) ?? []), ...action.paragraphs]); count += action.paragraphs.length; changed += action.paragraphs.length;
+    } else {
+      if (action.kind === 'remove') { if (!descriptor.removable) throw new Error(descriptor.reason); count--; changed++; }
+      else if (action.text !== descriptor.text) { if (!descriptor.editable) throw new Error(descriptor.reason); changed++; }
+      changes.set(action.index, action);
+    }
+  }
+  if (count < 1 || count > 10000) throw new Error('编辑后正文需要保留1至10000段');
+  let textBytes = 0, output = '', cursor = 0;
+  const appendNew = (texts: string[]) => { for (const text of texts) { textBytes += checkedBodyText(text); output += defaultBodyParagraph(text); } };
+  scan.nodes.forEach((node, index) => {
+    output += xml.slice(cursor, node.start); appendNew(before.get(index) ?? []);
+    const change = changes.get(index), original = xml.slice(node.start, node.end);
+    if (change?.kind !== 'remove') {
+      const text = change?.kind === 'update' ? change.text : descriptors[index].text;
+      textBytes += checkedBodyText(text);
+      output += change?.kind === 'update' && text !== descriptors[index].text ? rewriteParagraphText(original, text) : original;
+    }
+    appendNew(after.get(index) ?? []); cursor = node.end;
+    if (textBytes > BODY_TEXT_BYTES) throw new Error('编辑后正文文字超过8 MiB，请分批处理');
+  });
+  output += xml.slice(cursor);
+  if (!changed) return { bytes: new Uint8Array(bytes), paragraphs: count, changed: 0 };
+  zip.file('word/document.xml', output);
+  return { bytes: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }), paragraphs: count, changed };
+}
 function tableReason(node: XmlElement) {
   const all = descendants([node]);
   if (all.some(child => child !== node && child.name === 'w:tbl')) return '包含嵌套表格，请用 Word/WPS 编辑';
@@ -309,4 +435,133 @@ export async function replaceImage(bytes: Uint8Array, mediaName: string, image: 
     }
   }
   return { bytes: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }), name: mediaName };
+}
+
+export interface ParagraphFormat {
+  /** 对齐方式；不传则保持原值。 */
+  align?: 'left' | 'center' | 'right' | 'both';
+  /** 首行缩进字符数（0 表示取消缩进）；不传则保持原值。 */
+  firstLineChars?: number;
+  /** 行距倍数（1~3，Word 的 w:line 以 240 为一倍）；不传则保持原值。 */
+  lineSpacing?: number;
+  /** 段前/段后间距（单位：磅，换算为 w:before/w:after 的二十分之一磅）。 */
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
+}
+/** 只改写正文段落的 pPr（对齐/首行缩进/行距/段间距）；文字、表格、图片和其它部件保持原字节。
+ * 这是"更完整排版"的第一步，不承诺支持分节、编号、脚注与样式表级联。 */
+export async function formatDocxParagraphs(bytes: Uint8Array, targets: { index: number; format: ParagraphFormat }[]): Promise<RewriteResult> {
+  if (!targets.length || targets.length > 500) throw new Error('一次需要1至500个段落的格式修改');
+  const zip = await JSZip.loadAsync(bytes);
+  const entry = zip.file('word/document.xml');
+  if (!entry) throw new Error('这不是可编辑的 Word 文档（缺少 word/document.xml）');
+  const xml = await entry.async('string');
+  const blocks = topLevelParagraphs(xml);
+  const unique = new Map<number, ParagraphFormat>();
+  for (const item of targets) {
+    if (!Number.isInteger(item.index) || item.index < 0 || item.index >= blocks.length) throw new Error(`第 ${item.index + 1} 段不存在，已取消排版`);
+    if (unique.has(item.index)) throw new Error('同一段落不能在一次操作里重复排版');
+    unique.set(item.index, item.format);
+  }
+  let output = '', cursor = 0, changed = 0;
+  for (const [index, format] of [...unique.entries()].sort((a, b) => a[0] - b[0])) {
+    const block = blocks[index]!;
+    output += xml.slice(cursor, block.start);
+    const next = formatParagraphBlock(xml.slice(block.start, block.end), format);
+    output += next.block; cursor = block.end;
+    if (next.changed) changed += 1;
+  }
+  output += xml.slice(cursor);
+  zip.file('word/document.xml', output);
+  return { bytes: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }), paragraphs: blocks.length, changed };
+}
+
+/** 在 <w:p> 的 pPr 上设置属性；没有 pPr 时插入一个，位置紧随段落开始标签。 */
+function formatParagraphBlock(block: string, format: ParagraphFormat) {
+  // 每类属性只允许一个元素：spacing 必须把行距与段前段后合并，否则会产生两个 <w:spacing>，
+  // Word 打开时可能被"修复"掉其中一个（等于静默丢格式）。
+  const spacing: string[] = [];
+  if (format.lineSpacing !== undefined) {
+    const value = format.lineSpacing;
+    if (!Number.isFinite(value) || value < 1 || value > 3) throw new Error('行距倍数必须在1到3之间');
+    spacing.push(`w:line="${Math.round(value * 240)}"`, 'w:lineRule="auto"');
+  }
+  if (format.spaceBeforePt !== undefined || format.spaceAfterPt !== undefined) {
+    const before = format.spaceBeforePt ?? 0, after = format.spaceAfterPt ?? 0;
+    if (!Number.isFinite(before) || !Number.isFinite(after) || before < 0 || after < 0 || before > 200 || after > 200) throw new Error('段前段后间距必须在0到200磅之间');
+    if (format.spaceBeforePt !== undefined) spacing.push(`w:before="${Math.round(before * 20)}"`);
+    if (format.spaceAfterPt !== undefined) spacing.push(`w:after="${Math.round(after * 20)}"`);
+  }
+  const ind: string[] = [];
+  if (format.firstLineChars !== undefined) {
+    const chars = format.firstLineChars;
+    if (!Number.isFinite(chars) || chars < 0 || chars > 20) throw new Error('首行缩进必须在0到20字符之间');
+    if (chars === 0) ind.push('w:firstLineChars="0"', 'w:firstLine="0"');
+    else ind.push(`w:firstLineChars="${Math.round(chars * 100)}"`);
+  }
+  const jc = format.align ? `w:val="${format.align}"` : '';
+  // pPr 子元素有固定顺序：spacing → ind → jc（Word 对顺序敏感）。
+  const wanted: { name: string; attributes: string[] }[] = [];
+  if (spacing.length) wanted.push({ name: 'w:spacing', attributes: spacing });
+  if (ind.length) wanted.push({ name: 'w:ind', attributes: ind });
+  if (jc) wanted.push({ name: 'w:jc', attributes: [jc] });
+  if (!wanted.length) return { block, changed: false };
+  const elementOf = (name: string, attributes: string[]) => `<${name}${attributes.map(item => ` ${item}`).join('')}/>`;
+
+  const selfClosing = /^<w:p(?:\s[^>]*?)?\s*\/>$/u.test(block);
+  const opening = selfClosing ? block.replace(/\s*\/>$/u, '>') : block;
+  const node = xmlElements(selfClosing ? `${opening}</w:p>` : opening)[0]!;
+  const propertiesNode = node.children.find(child => child.name === 'w:pPr');
+  if (!propertiesNode) {
+    const merged = wanted.map(item => elementOf(item.name, item.attributes)).join('');
+    if (selfClosing) return { block: `${opening}<w:pPr>${merged}</w:pPr></w:p>`, changed: true };
+    return { block: `${opening.slice(0, node.openEnd)}<w:pPr>${merged}</w:pPr>${opening.slice(node.openEnd)}`, changed: true };
+  }
+  const propertiesTag = opening.slice(propertiesNode.start, propertiesNode.openEnd);
+  if (/\/\s*>$/u.test(propertiesTag)) {
+    const expanded = propertiesTag.replace(/\/\s*>$/u, '>');
+    const merged = wanted.map(item => elementOf(item.name, item.attributes)).join('');
+    return { block: opening.slice(0, propertiesNode.start) + expanded + merged + '</w:pPr>' + opening.slice(propertiesNode.end), changed: true };
+  }
+  // Do not introduce duplicates or silently discard XML attributes when an existing
+  // property uses a representation that the bounded merger cannot preserve.
+  for (const item of wanted) {
+    const existingNodes = propertiesNode.children.filter(child => child.name === item.name);
+    if (existingNodes.length > 1) throw new Error('段落格式包含重复属性，暂不支持修改');
+    if (existingNodes.length) {
+      const existing = opening.slice(existingNodes[0]!.start, existingNodes[0]!.end);
+      if (!/\/>$/u.test(existing) || /=\s*'/u.test(existing)) throw new Error('段落格式包含不支持的属性表示，已保留原稿');
+    }
+  }
+  let inner = opening.slice(propertiesNode.openEnd, propertiesNode.closeStart);
+  const order = ['w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:framePr', 'w:widowControl', 'w:numPr', 'w:suppressLineNumbers', 'w:pBdr', 'w:shd', 'w:tabs', 'w:suppressAutoHyphens', 'w:kinsoku', 'w:wordWrap', 'w:overflowPunct', 'w:topLinePunct', 'w:autoSpaceDE', 'w:autoSpaceDN', 'w:bidi', 'w:adjustRightInd', 'w:snapToGrid', 'w:spacing', 'w:ind', 'w:contextualSpacing', 'w:mirrorIndents', 'w:suppressOverlap', 'w:jc', 'w:textDirection', 'w:textAlignment', 'w:textboxTightWrap', 'w:outlineLvl', 'w:divId', 'w:cnfStyle', 'w:rPr', 'w:sectPr', 'w:pPrChange'];
+  for (const item of wanted) {
+    const pattern = new RegExp(`<${item.name}\\b([^>]*)/>`, 'u');
+    const existing = pattern.exec(inner);
+    if (!existing) {
+      const children = xmlElements(`<root>${inner}</root>`)[0]!.children;
+      if (children.some(child => !order.includes(child.name))) throw new Error('段落属性包含不支持的扩展，已保留原稿');
+      const next = children.find(child => order.indexOf(child.name) > order.indexOf(item.name));
+      const at = next ? next.start - '<root>'.length : inner.length;
+      inner = inner.slice(0, at) + elementOf(item.name, item.attributes) + inner.slice(at);
+      continue;
+    }
+    // 保留已有属性，只覆盖本次设置的项（例如原来的 w:before 不丢）。
+    const attributes = new Map<string, string>();
+    for (const match of existing[1]!.matchAll(/([\w:]+)\s*=\s*"([^"]*)"/gu)) attributes.set(match[1]!, match[2]!);
+    if (item.name === 'w:ind' && format.firstLineChars !== undefined) {
+      // OOXML hanging indentation takes precedence over first-line indentation.
+      // Remove the mutually exclusive settings; keep unrelated left/right values.
+      attributes.delete('w:hanging');
+      attributes.delete('w:hangingChars');
+      attributes.delete('w:firstLine');
+    }
+    for (const attribute of item.attributes) {
+      const pair = /^([\w:]+)\s*=\s*"([^"]*)"$/u.exec(attribute);
+      if (pair) attributes.set(pair[1]!, pair[2]!);
+    }
+    const merged = [...attributes.entries()].map(([key, value]) => `${key}="${value}"`);
+    inner = inner.replace(pattern, elementOf(item.name, merged));
+  }
+  return { block: opening.slice(0, propertiesNode.openEnd) + inner + opening.slice(propertiesNode.closeStart), changed: true };
 }

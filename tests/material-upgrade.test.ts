@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { WAIT_LIMIT } from './wait';
 
 const script = path.resolve('scripts/protect-upgrade-materials.ps1');
 const windows = { skip: process.platform !== 'win32' };
@@ -230,7 +231,7 @@ test('升级保护：复制中源目录新增文件会中止，不将不完整�
   for (let index = 0; index < 100; index++) await fs.writeFile(path.join(f.source, `虚构资料-${String(index).padStart(3, '0')}.md`), '仅用于复制时变更检测\n'.repeat(100));
   let completed = false;
   const pending = guard(f).finally(() => { completed = true; });
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + WAIT_LIMIT;
   let changed = false;
   while (!completed && Date.now() < deadline) {
     const versions = await backups(f.userData);

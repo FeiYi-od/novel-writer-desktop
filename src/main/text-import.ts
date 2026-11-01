@@ -9,3 +9,15 @@ export function textDocument(text: string): RichNode {
   const paragraphs = text.split(/\r\n|\n|\r/).filter(line => line.trim());
   return normalizeParagraphs({ type: 'doc', content: (paragraphs.length ? paragraphs : ['']).map(text => ({ type: 'paragraph', content: [{ type: 'text', text }] })) });
 }
+
+/** TXT 正文按行导入：空行和文件末尾的换行都是用户内容。 */
+export function txtDocument(text: string): RichNode {
+  return normalizeParagraphs({ type: 'doc', content: text.split(/\r\n|\n|\r/).map(line => ({ type: 'paragraph', content: line ? [{ type: 'text', text: line }] : [] })) });
+}
+
+/** TXT 的换行分隔符与用于复制到平台的双换行格式不同。 */
+export function txtText(document: RichNode): string {
+  return (normalizeParagraphs(document).content ?? []).map(block =>
+    (block.content ?? []).map(run => run.type === 'hardBreak' ? '\n' : run.text ?? '').join('')
+  ).join('\n');
+}

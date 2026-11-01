@@ -1,0 +1,24 @@
+/* Shelf interactions stay immediate during frequent use; focus must remain visible. */
+.library-page { min-width: 0; }
+.library-page .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 20px; }
+.library-page .shelf-card { min-width: 0; min-height: 260px; padding: 20px; gap: 20px; border-color: #dce3d8; box-shadow: 0 4px 18px rgba(36, 57, 39, .05); }
+.library-page .cover-button { border-radius: 4px 9px 9px 4px; align-self: flex-start; }
+.library-page .cover-button:focus-visible { outline: 3px solid #365741; outline-offset: 4px; }
+.library-page .cover-title { max-height: 150px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; padding: 4px 16px; }
+.library-page .card-details h2 { overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.library-page .card-details p { overflow-wrap: anywhere; color: #687864; }
+.library-page .card-meta { color: #63775e; letter-spacing: .03em; }
+.library-page .card-actions button { font-size: 12px; min-height: 36px; }
+.library-page input:focus-visible, .library-page button:focus-visible { outline: 2px solid #365741; outline-offset: 3px; }
+.library-page .empty-library button { margin-top: 8px; }
+@media (max-width: 760px) {
+  .library-page { padding: 22px 18px 36px; }
+  .library-page .page-title { flex-wrap: wrap; gap: 16px; }
+  .library-page .page-title input { width: 100%; max-width: none; }
+  .library-page .shelf-card { gap: 14px; padding: 14px; }
+  .library-page .cover-art:not(.small) { width: 108px; height: 162px; }
+  .library-page .card-details h2 { font-size: 18px; margin: 8px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .library-page button { transition: none; }
+}

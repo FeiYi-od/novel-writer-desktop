@@ -18,9 +18,10 @@ import { KnowledgeService } from '../src/main/knowledge-service';
 import { textDocument } from '../src/main/text-import';
 import { copyableText } from '../src/core/typography';
 import type { AIRequest, AITask, KnowledgeCitationReference, KnowledgeSearchHit } from '../src/shared/contracts';
+import { WAIT_LIMIT } from './wait';
 
 const waitFor = async (check: () => Promise<boolean>) => {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + WAIT_LIMIT;
   while (!await check()) { if (Date.now() >= deadline) throw new Error('AI 引用测试等待超时'); await new Promise(resolve => setTimeout(resolve, 15)); }
 };
 const sse = (text: string, finish: string | null = 'stop') => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text }, finish_reason: finish }] })}\n\n`;

@@ -21,10 +21,14 @@ export class ModelDiscoveryService {
           credential = saved.key;
         }
       }
-      // Cached lists keep the settings page instant; refresh skips the cache on purpose.
-      if (this.cache && request.refresh !== true) {
+      // A provider may expose different models to different accounts at the same
+      // URL. Do not read or persist shared cache entries when using credentials.
+      if (this.cache && !credential && request.refresh !== true) {
         const hit = await this.cache.get(adapter, request.baseUrl);
-        if (hit) return { connectionId: request.connectionId, baseUrl: request.baseUrl, checkedAt: hit.checkedAt, models: hit.models as AIModelList['models'], cached: true };
+        if (hit) {
+          if ((await this.connections.read()).hash !== request.expectedHash) throw new Error('请求期间模型配置已更新，旧列表已丢弃');
+          return { connectionId: request.connectionId, baseUrl: request.baseUrl, checkedAt: hit.checkedAt, models: hit.models as AIModelList['models'], cached: true };
+        }
       }
       const headers: Record<string, string> = { Accept: 'application/json' };
       if (credential) headers[adapter === 'gemini' ? 'x-goog-api-key' : adapter === 'anthropic' ? 'x-api-key' : 'Authorization'] = ['gemini', 'anthropic'].includes(adapter) ? credential : 'Bearer ' + credential;
@@ -71,7 +75,8 @@ export class ModelDiscoveryService {
         models.push({ id, name, contextWindow: positive(item.context_window ?? item.context_length), maxOutputTokens: positive(item.max_output_tokens) });
       }
       if ((await this.connections.read()).hash !== request.expectedHash) throw new Error('请求期间模型配置已更新，旧列表已丢弃');
-      await this.cache?.set(adapter, request.baseUrl, models).catch(() => {});
+      if (!credential) await this.cache?.set(adapter, request.baseUrl, models).catch(() => {});
+      if ((await this.connections.read()).hash !== request.expectedHash) throw new Error('请求期间模型配置已更新，旧列表已丢弃');
       return { connectionId: request.connectionId, baseUrl: request.baseUrl, checkedAt: new Date().toISOString(), models };
     } catch (e) {
       if (e instanceof Error && /^(模型列表|模型配置|服务不支持|更换地址|请求期间)/u.test(e.message)) throw e;

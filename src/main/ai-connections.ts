@@ -81,6 +81,9 @@ export class AIConnections {
         await fs.writeFile(temp, JSON.stringify(value, null, 2), { flag: 'wx' });
         if ((await this.stored()).hash !== expectedHash) throw new Error('AI 连接文件在保存期间被修改');
         await keepPreviousCopy(this.file);
+        // The backup itself awaits I/O; another process may change the original
+        // before it completes. Recheck immediately before replacing the file.
+        if ((await this.stored()).hash !== expectedHash) throw new Error('AI 连接文件在保存期间被修改');
         await fs.rename(temp, this.file);
       } finally { await fs.rm(temp, { force: true }); }
       return this.read();

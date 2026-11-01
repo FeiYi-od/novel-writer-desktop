@@ -5,5 +5,7 @@ import './style.css';
 import './pages.css';
 import './characters.css';
 import './ai.css';
+import './shelf-polish.css';
+import './accessibility-polish.css';
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

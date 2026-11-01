@@ -11,6 +11,7 @@ interface MaterialHistoryPanelProps {
   blocked: boolean;
   onClose: () => void;
   onBeforeCopy: () => Promise<void>;
+  onAfterRestore: (projectId: string) => Promise<void>;
   onBusy: (busy: boolean) => void;
 }
 
@@ -49,7 +50,7 @@ function HistorySide({ file, side, preview, loading }: { file: MaterialHistoryFi
 }
 
 /** Read-only comparisons and a separate recovery copy; no current material is replaced. */
-export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBeforeCopy, onBusy }: MaterialHistoryPanelProps) {
+export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBeforeCopy, onAfterRestore, onBusy }: MaterialHistoryPanelProps) {
   const [snapshot, setSnapshot] = useState<MaterialHistorySnapshot | null>(null);
   const [capacity, setCapacity] = useState<MaterialHistoryCapacitySnapshot | null>(null);
   const [capacityError, setCapacityError] = useState('');
@@ -59,6 +60,8 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
   const [result, setResult] = useState<MaterialHistoryCopyResult | null>(null);
   const [archiveResult, setArchiveResult] = useState<MaterialHistoryArchiveResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshRequired, setRefreshRequired] = useState(false);
+  const refreshRequiredRef = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [importOpen, setImportOpen] = useState(false);
@@ -101,7 +104,7 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
     catch (e) { if (valid(id, ticket)) setError(errorText(e)); }
     finally { if (valid(id, ticket)) { running.current = false; setBusy(false); } }
   };
-  useEffect(() => { onBusy(busy || importBusy || dagBusy || dagImportBusy); return () => { onBusy(false); }; }, [busy, importBusy, dagBusy, dagImportBusy, onBusy]);
+  useEffect(() => { onBusy(busy || refreshRequired || importBusy || dagBusy || dagImportBusy); return () => { onBusy(false); }; }, [busy, refreshRequired, importBusy, dagBusy, dagImportBusy, onBusy]);
   useEffect(() => {
     const previous = document.activeElement;
     panelRef.current?.focus();
@@ -114,18 +117,18 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
   useEffect(() => {
     mounted.current = true;
     const id = projectId; const ticket = ++request.current;
-    running.current = true; setBusy(true); setSnapshot(null); setCapacity(null); setCapacityError(''); setSelected(null); setPreview(null); setPath(''); setResult(null); setArchiveResult(null); setError(''); setNotice('');
+    running.current = true; refreshRequiredRef.current = false; setRefreshRequired(false); setBusy(true); setSnapshot(null); setCapacity(null); setCapacityError(''); setSelected(null); setPreview(null); setPath(''); setResult(null); setArchiveResult(null); setError(''); setNotice('');
     void load(id, ticket).catch(e => { if (valid(id, ticket)) setError(errorText(e)); }).finally(() => {
       if (valid(id, ticket)) { running.current = false; setBusy(false); }
     });
     return () => { mounted.current = false; request.current++; running.current = false; };
   }, [projectId]);
 
-  const refresh = () => void operate(async (id, ticket) => {
+  const refresh = () => { if (refreshRequiredRef.current) return; void operate(async (id, ticket) => {
     setCapacityError(''); await load(id, ticket);
-  });
+  }); };
   const open = (version: MaterialHistoryVersion) => {
-    if (running.current) return;
+    if (running.current || refreshRequiredRef.current) return;
     setSelected(version); setPreview(null); setPath(''); setResult(null); setArchiveResult(null);
     void operate(async (id, ticket) => {
       const value = await window.writer.previewMaterialHistory({ projectId: id, source: version.source, id: version.id });
@@ -134,7 +137,7 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
     });
   };
   const openFile = (file: MaterialHistoryFile) => {
-    if (!selected || !preview || running.current) return;
+    if (!selected || !preview || running.current || refreshRequiredRef.current) return;
     const version = selected; const fingerprint = preview.fingerprint;
     setPath(file.path);
     void operate(async (id, ticket) => {
@@ -146,7 +149,7 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
     });
   };
   const copy = () => {
-    if (!selected || !preview || blocked || result || running.current) return;
+    if (!selected || !preview || blocked || result || running.current || refreshRequiredRef.current) return;
     const version = selected; const fingerprint = preview.fingerprint;
     void operate(async (id, ticket) => {
       await onBeforeCopy();
@@ -165,7 +168,7 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
     });
   };
   const archive = () => {
-    if (!selected || !preview || blocked || archiveResult || running.current) return;
+    if (!selected || !preview || blocked || archiveResult || running.current || refreshRequiredRef.current) return;
     const version = selected; const fingerprint = preview.fingerprint;
     void operate(async (id, ticket) => {
       await onBeforeCopy(); if (!valid(id, ticket)) return;
@@ -174,15 +177,117 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
       verify(value, id, version); setArchiveResult(value);
     });
   };
+  const retain = () => {
+    if (!selected || selected.source !== 'local' || selected.location !== 'active' || !preview || blocked || running.current || refreshRequiredRef.current) return;
+    const version = selected, fingerprint = preview.fingerprint;
+    if (!window.confirm('将此份本机历史移至保留区，释放一个活动历史名额？\n\n原始文件继续保留，不释放磁盘空间；旧版应用不能查看保留区。书内传输历史不会移动。')) return;
+    void operate(async (id, ticket) => {
+      await onBeforeCopy();
+      if (!valid(id, ticket)) return;
+      let value;
+      try { value = await window.writer.retainMaterialHistory({ projectId: id, id: version.id, fingerprint }); }
+      catch (failure) {
+        // An error may arrive after the directory move. Its actual location is
+        // unknown until the journal and both roots are rechecked on refresh.
+        if (valid(id, ticket)) { setSnapshot(null); setSelected(null); setPreview(null); setPath(''); }
+        throw failure;
+      }
+      if (!valid(id, ticket)) return;
+      if (!value || value.schemaVersion !== 1 || value.projectId !== id || value.id !== version.id || value.location !== 'retained'
+        || !Number.isSafeInteger(value.files) || value.files < 0 || !Number.isSafeInteger(value.bytes) || value.bytes < 0) {
+        setSnapshot(null); setSelected(null); setPreview(null); setPath('');
+        throw new Error('保留结果的小说、历史ID或内容统计不匹配，请刷新历史后核对，勿重复操作');
+      }
+      // Never leave a stale "active" row actionable if the subsequent refresh fails.
+      setSnapshot(null); setSelected(null); setPreview(null); setPath('');
+      await load(id, ticket);
+      if (valid(id, ticket)) setNotice('已移至保留区，释放一个活动历史名额；原始历史仍保留，不减少磁盘占用。');
+    });
+  };
+  const reclaim = () => {
+    const isTransport = selected?.source === 'transport';
+    const isRetained = selected?.source === 'local' && selected.location === 'retained';
+    if (!selected || (!isTransport && !isRetained) || !preview || blocked || running.current || refreshRequiredRef.current) return;
+    const version = selected, fingerprint = preview.fingerprint;
+    // 单次确认 + 接口层 confirm:"回收" 双保险；文案必须说明不可撤销与不受影响的范围。
+    const message = isTransport
+      ? '回收这个书内传输版本并删除其目录以释放磁盘与名额？\n\n这里没有回收站，删除后只能用完整ZIP归档找回；本机历史、当前资料和同步状态都不会被删除。仍是其他版本父版本时会被拒绝。'
+      : '回收这份保留区历史并删除其本机文件以释放磁盘？\n\n这里没有回收站，删除后只能用完整ZIP或书内传输历史找回；活动区历史、书内传输版本和已打包ZIP都不会被删除。';
+    if (!window.confirm(message)) return;
+    void operate(async (id, ticket) => {
+      await onBeforeCopy();
+      if (!valid(id, ticket)) return;
+      let value;
+      try {
+        value = isTransport
+          ? await window.writer.reclaimMaterialHistoryTransport({ projectId: id, id: version.id, fingerprint, confirm: '回收' })
+          : await window.writer.reclaimMaterialHistory({ projectId: id, id: version.id, fingerprint, confirm: '回收' });
+      }
+      catch (failure) {
+        // Deletion may have happened before an error (e.g. record write). Recheck the
+        // real state on refresh instead of claiming success or failure.
+        if (valid(id, ticket)) { setSnapshot(null); setSelected(null); setPreview(null); setPath(''); }
+        throw failure;
+      }
+      if (!valid(id, ticket)) return;
+      if (!value || value.schemaVersion !== 1 || value.projectId !== id || value.id !== version.id
+        || !Number.isSafeInteger(value.files) || value.files < 0 || !Number.isSafeInteger(value.bytes) || value.bytes < 0) {
+        setSnapshot(null); setSelected(null); setPreview(null); setPath('');
+        throw new Error('回收结果的小说、历史ID或内容统计不匹配，请刷新历史后核对');
+      }
+      setSnapshot(null); setSelected(null); setPreview(null); setPath('');
+      await load(id, ticket);
+      if (valid(id, ticket)) setNotice(isTransport
+        ? `已回收书内传输版本，释放 ${size(value.bytes)}；本机历史与当前资料未改动。`
+        : `已回收保留区历史，释放 ${size(value.bytes)}；活动区与书内传输历史未改动。`);
+    });
+  };
+  const refreshAfterRestore = async (id: string, ticket: number) => {
+    await onAfterRestore(id);
+    if (!valid(id, ticket)) throw new Error('刷新期间小说已切换，请重新打开');
+    refreshRequiredRef.current = false; setRefreshRequired(false);
+    await load(id, ticket);
+  };
+  const retryRestoreRefresh = () => {
+    if (!refreshRequiredRef.current || running.current) return;
+    void operate(async (id, ticket) => {
+      await refreshAfterRestore(id, ticket);
+      if (valid(id, ticket)) setNotice('本机资料已重新读取，请重新核对历史与同步状态。');
+    });
+  };
+  const restore = () => {
+    if (!selected || !preview || blocked || running.current || refreshRequiredRef.current) return;
+    const version = selected, fingerprint = preview.fingerprint;
+    if (!window.confirm('将所选历史完整还原到本机固定资料？当前固定资料将先保留为新的本机历史备份。同步基线不变，未确认状态按历史原样保留；外层未执行的同步选择将清除。')) return;
+    if (!window.confirm('请确认已核对差异。此操作会替换本书当前固定资料；含不支持的链接或空目录会拒绝。确定继续？')) return;
+    void operate(async (id, ticket) => {
+      await onBeforeCopy(); if (!valid(id, ticket)) return;
+      refreshRequiredRef.current = true; setRefreshRequired(true);
+      setSnapshot(null); setSelected(null); setPreview(null); setPath(''); setResult(null); setArchiveResult(null);
+      let failure: unknown; let changed = false;
+      try {
+        const value = await window.writer.restoreMaterialHistory({ projectId: id, source: version.source, id: version.id, fingerprint });
+        if (!valid(id, ticket)) return;
+        verify(value, id, version);
+        if (typeof value.changed !== 'boolean' || (value.changed ? typeof value.backupId !== 'string' || !/^[0-9a-f-]{36}$/iu.test(value.backupId) : value.backupId !== null))
+          throw new Error('历史恢复结果不完整，请重新核对');
+        changed = value.changed;
+      } catch (error) { failure = error; }
+      try { await refreshAfterRestore(id, ticket); }
+      catch (error) { throw new Error(`恢复结果需要重新核对，旧资料页面已锁定：${errorText(error)}`); }
+      if (failure) throw failure;
+      if (valid(id, ticket)) setNotice(changed ? '历史已还原，换前资料已保留为本机历史；请重新核对同步差异。' : '当前资料与该历史一致，无需换入。');
+    });
+  };
   const copyArchivePath = () => {
     if (!archiveResult) return;
     const file = archiveResult.file;
     void operate(async (id, ticket) => { await window.writer.copyText(file); if (valid(id, ticket)) setNotice('历史ZIP路径已复制'); });
   };
   const selectedFile = preview?.files.find(file => file.path === path);
-  const close = () => { if (!running.current && !nestedOpen) onClose(); };
+  const close = () => { if (!running.current && !nestedOpen && !refreshRequiredRef.current) onClose(); };
 
-  return <><div className="modal-overlay material-history-overlay" inert={nestedOpen} aria-hidden={nestedOpen || undefined}><section ref={panelRef} tabIndex={-1} className="book-modal material-history-panel" role="dialog" aria-modal="true" aria-labelledby="material-history-title" data-testid="history-panel" aria-busy={busy} onKeyDown={event => {
+  return <><div className="modal-overlay material-history-overlay" inert={nestedOpen} aria-hidden={nestedOpen || undefined}><section ref={panelRef} tabIndex={-1} className="book-modal material-history-panel" role="dialog" aria-modal="true" aria-labelledby="material-history-title" data-testid="history-panel" aria-busy={busy || refreshRequired} onKeyDown={event => {
     if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); close(); }
     if (event.key === 'Tab') {
       const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
@@ -192,7 +297,7 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
       else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panelRef.current)) { event.preventDefault(); first.focus(); }
     }
   }}>
-    <header><div><h2 id="material-history-title">历史版本与资料找回</h2><p>{title}</p></div><button type="button" data-testid="history-close" aria-label="关闭资料历史" disabled={busy} onClick={close}>关闭</button></header>
+    <header><div><h2 id="material-history-title">历史版本与资料找回</h2><p>{title}</p></div><button type="button" data-testid="history-close" aria-label="关闭资料历史" disabled={busy || refreshRequired} onClick={close}>关闭</button></header>
     <p className="material-history-help">选择历史版本后可只读对照当前资料。“恢复为新副本”会单独保存所选历史的完整文件，不替换当前设定、不改变同步设置，也不会自动确认为正史。外层尚未执行的同步选择会保留。</p>
     <section className="material-history-capacity" data-testid="history-capacity" aria-label="历史目录容量">
       <header><h3>历史目录容量</h3>{capacity && <span>核对于 {date(capacity.checkedAt)}</span>}</header>
@@ -205,17 +310,19 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
           <progress max={capacity.limit} value={Math.min(item.entries, capacity.limit)} aria-label={`${source === 'local' ? '本机归档' : '书内传输'}条目占用`} />
         </section>;
       })}</div> : !capacityError && <p>{busy ? '正在读取目录容量…' : '容量尚未核对'}</p>}
-      <p className="material-history-help">统计目录条目，包含尚未完成的传输目录；不等于已核验版本数或磁盘占用。每侧上限1,000个，达到800个时提醒。打包ZIP不会释放名额；请保留完整历史及父版本，勿删除目录绕过上限。刷新历史列表可重新核对。</p>
+      {snapshot && <p data-testid="history-retained-count">本机保留区：{snapshot.versions.filter(version => version.source === 'local' && version.location === 'retained').length.toLocaleString()} 份已列出历史，不计入活动历史名额。</p>}
+      <p className="material-history-help">统计目录条目，包含尚未完成的传输目录；不等于已核验版本数或磁盘占用。每侧上限1,000个，达到800个时提醒。打包ZIP不会释放名额。将本机活动历史移至保留区可释放活动名额，但不释放磁盘空间；旧版应用不能查看保留区。书内传输版本及父链不会移动。</p>
     </section>
-    <div ref={messageRef}>{error && <div role="alert" className="error" data-testid="history-error">{error}<span>当前资料和历史原件均保留。版本发生变化时，请刷新列表并重新打开后再恢复。</span></div>}
+    <div ref={messageRef}>{error && <div role="alert" className="error" data-testid="history-error">{error}<span>历史原件和必要的换前备份均保留。版本发生变化时，请重新核对。</span></div>}
+    {refreshRequired && <div role="alert" className="error" data-testid="history-restore-refresh-required">恢复结果尚未核对；旧资料页面已锁定，需先重新读取本书资料。<button type="button" data-testid="history-restore-refresh" disabled={busy} onClick={retryRestoreRefresh}>重新读取资料</button></div>}
     {notice && <p role="status" className="material-history-notice">{notice}</p>}
     {result && <section className="material-history-result" data-testid="history-result" role="status"><strong>已恢复为新副本</strong><p>{result.files} 个文件 · {size(result.bytes)}</p><code>{result.directory}</code><button type="button" data-testid="history-copy-directory" disabled={busy} onClick={copyDirectory}>复制新副本目录</button><p>当前设定未变。请核对副本内容，再决定是否手动采纳。</p></section>}
     {archiveResult && <section className="material-history-result" data-testid="history-archive-result" role="status"><strong>历史ZIP已完成</strong><p>{archiveResult.files} 个文件 · 原始 {size(archiveResult.bytes)} · ZIP {size(archiveResult.archiveBytes)}</p><code>{archiveResult.file}</code><code>SHA-256 {archiveResult.sha256}</code><button type="button" data-testid="history-archive-path" disabled={busy} onClick={copyArchivePath}>复制历史ZIP路径</button><p>ZIP与完成清单位于本书“小说资料/资料历史归档”。旧历史继续保留；本次归档不会删除父版本或解除历史数量上限。</p></section>}</div>
-    <div className="material-history-toolbar"><span>{busy ? '正在读取 / 核对…' : snapshot ? `共 ${snapshot.versions.length} 个历史版本` : '尚未读取'}</span><div className="actions"><button type="button" data-testid="history-dag-open" disabled={busy || nestedOpen} onClick={() => setDagOpen(true)}>完整历史归档…</button><button type="button" data-testid="history-dag-import-open" disabled={busy || nestedOpen} onClick={() => setDagImportOpen(true)}>导入完整历史…</button><button type="button" data-testid="history-import-open" disabled={busy || nestedOpen} onClick={() => setImportOpen(true)}>导入历史ZIP…</button><button type="button" data-testid="history-refresh" disabled={busy} onClick={refresh}>刷新历史列表</button></div></div>
+    <div className="material-history-toolbar"><span>{busy ? '正在读取 / 核对…' : snapshot ? `共 ${snapshot.versions.length} 个历史版本` : '尚未读取'}</span><div className="actions"><button type="button" data-testid="history-dag-open" disabled={busy || refreshRequired || nestedOpen} onClick={() => setDagOpen(true)}>完整历史归档…</button><button type="button" data-testid="history-dag-import-open" disabled={busy || refreshRequired || nestedOpen} onClick={() => setDagImportOpen(true)}>导入完整历史…</button><button type="button" data-testid="history-import-open" disabled={busy || refreshRequired || nestedOpen} onClick={() => setImportOpen(true)}>导入历史ZIP…</button><button type="button" data-testid="history-refresh" disabled={busy || refreshRequired} onClick={refresh}>刷新历史列表</button></div></div>
     <div className="material-history-content"><aside className="material-history-versions" aria-label="资料历史版本"><h3>历史版本</h3>
       <p className="material-history-help">本机归档显示目录记录时间；书内版本显示快照创建时间。列表未核验内容，打开后才校验文件与归属。</p>
-      <ul>{snapshot?.versions.map(version => <li key={key(version)}><button type="button" data-testid="history-version" data-source={version.source} data-id={version.id} aria-pressed={selected ? key(selected) === key(version) : false} disabled={busy} onClick={() => open(version)}>
-        <strong>{version.source === 'local' ? '本机替换前归档' : '书内传输版本'}</strong><span>{date(version.createdAt)}{version.source === 'local' ? '（目录记录）' : ''}</span><span>{version.files === null ? '文件数量待打开核验' : `${version.files} 个文件`}{version.bytes === null ? ' · 大小待核验' : ` · ${size(version.bytes)}`}</span><code>{version.id}</code>
+      <ul>{snapshot?.versions.map(version => <li key={key(version)}><button type="button" data-testid="history-version" data-source={version.source} data-location={version.location} data-id={version.id} aria-pressed={selected ? key(selected) === key(version) : false} disabled={busy} onClick={() => open(version)}>
+        <strong>{version.source === 'local' ? version.location === 'retained' ? '本机归档 · 保留区' : '本机替换前归档 · 活动区' : '书内传输版本'}</strong><span>{date(version.createdAt)}{version.source === 'local' ? '（目录记录）' : ''}</span><span>{version.files === null ? '文件数量待打开核验' : `${version.files} 个文件`}{version.bytes === null ? ' · 大小待核验' : ` · ${size(version.bytes)}`}</span><code>{version.id}</code>
       </button></li>)}</ul>
       {snapshot?.versions.length === 0 && <p className="material-history-help" data-testid="history-empty">暂无可浏览历史。同步替换前归档及书内完整版本会在这里列出。</p>}
     </aside><section className="material-history-preview" aria-label="历史资料差异">
@@ -227,6 +334,6 @@ export function MaterialHistoryPanel({ projectId, title, blocked, onClose, onBef
         {selectedFile && <div className="material-history-detail"><h3>{selectedFile.path}</h3><div className="material-history-sides">{(['current', 'history'] as const).map(side => <HistorySide key={side} side={side} file={selectedFile} preview={preview} loading={busy} />)}</div></div>}
       </>}
     </section></div>
-    <footer><p>{blocked ? '请先保存各页修改并等待当前操作结束，再生成副本或ZIP。' : '恢复为独立目录或压缩ZIP；当前资料及历史原件保持不变。'}</p><div className="actions"><button type="button" data-testid="history-archive" disabled={busy || blocked || !preview || !!archiveResult} onClick={archive}>{archiveResult ? 'ZIP已完成' : '打包历史ZIP'}</button><button type="button" className="primary" data-testid="history-copy" disabled={busy || blocked || !preview || !!result} onClick={copy}>{result ? '已恢复为新副本' : busy ? '正在处理…' : '恢复为新副本'}</button></div></footer>
+    <footer><p>{blocked ? '请先保存各页修改并等待当前操作结束，再处理历史。' : '恢复为新副本不会修改当前资料；还原到本书会先保留换前备份。'}</p><div className="actions"><button type="button" data-testid="history-restore" disabled={busy || refreshRequired || blocked || !preview} onClick={restore}>还原到本书…</button><button type="button" data-testid="history-retain" disabled={busy || refreshRequired || blocked || !preview || selected?.source !== 'local' || selected?.location !== 'active'} onClick={retain}>移至保留区</button><button type="button" data-testid="history-reclaim" disabled={busy || refreshRequired || blocked || !preview || !(selected?.source === 'transport' || (selected?.source === 'local' && selected?.location === 'retained'))} onClick={reclaim}>回收磁盘…</button><button type="button" data-testid="history-archive" disabled={busy || refreshRequired || blocked || !preview || !!archiveResult} onClick={archive}>{archiveResult ? 'ZIP已完成' : '打包历史ZIP'}</button><button type="button" className="primary" data-testid="history-copy" disabled={busy || refreshRequired || blocked || !preview || !!result} onClick={copy}>{result ? '已恢复为新副本' : busy ? '正在处理…' : '恢复为新副本'}</button></div></footer>
   </section></div>{importOpen && <MaterialHistoryImportPanel key={projectId} projectId={projectId} title={title} blocked={blocked} onBeforeCopy={onBeforeCopy} onBusy={setImportBusy} onClose={() => setImportOpen(false)} />}{dagOpen && <MaterialHistoryDagPanel key={projectId} projectId={projectId} title={title} blocked={blocked} onBeforeCopy={onBeforeCopy} onBusy={setDagBusy} onClose={() => setDagOpen(false)} />}{dagImportOpen && <MaterialHistoryDagImportPanel key={projectId} projectId={projectId} title={title} blocked={blocked} onBeforeCopy={onBeforeCopy} onBusy={setDagImportBusy} onClose={() => setDagImportOpen(false)} />}</>;
 }

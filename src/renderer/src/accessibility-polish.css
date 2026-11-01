@@ -1,0 +1,22 @@
+/* Keep keyboard focus visible throughout the writing and settings workflows. */
+input:focus-visible,
+select:focus-visible,
+a[href]:focus-visible {
+  outline: 2px solid #365741;
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  button:focus-visible,
+  a[href]:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button, input, select, a[href] { transition-duration: 0s; }
+}

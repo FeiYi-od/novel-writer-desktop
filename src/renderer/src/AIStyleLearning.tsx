@@ -9,6 +9,7 @@ export function AIStyleLearning({ snapshot, sourceIds, name, connections, blocke
   useEffect(() => { setModel(localStorage.getItem(`style-model:${projectId}`) ?? ''); }, [projectId]);
   // The learned-style confirmation draft survives an exit; restoring is an explicit action.
   const [restorable, setRestorable] = useState<UiDraft | null>(null);
+  const [draftError, setDraftError] = useState('');
   const draftLoaded = useRef(false);
   useEffect(() => {
     let live = true;
@@ -17,7 +18,7 @@ export function AIStyleLearning({ snapshot, sourceIds, name, connections, blocke
   }, [projectId]);
   useEffect(() => {
     if (!draftLoaded.current || !dirty) return;
-    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'style', { doc: JSON.stringify({ rules, draftName, origin }) }).catch(() => {}); }, 800);
+    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'style', { doc: JSON.stringify({ rules, draftName, origin }) }).then(() => setDraftError('')).catch(e => setDraftError('未保存草稿自动备份失败，请保留当前页面并先保存或复制内容：' + String(e))); }, 800);
     return () => clearTimeout(timer);
   }, [dirty, projectId, rules, draftName, origin]);
   const restoreDraft = () => {
@@ -41,7 +42,7 @@ export function AIStyleLearning({ snapshot, sourceIds, name, connections, blocke
   let limitations: string[] = []; let output = task?.text ?? '';
   if (task?.status === 'complete') { try { const parsed = parseLearnedStyle(task.text); limitations = parsed.limitations; output = parsed.rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n\n'); } catch {} }
   return <section className="ai-panel ai-form style-learning-panel"><h2>模型文风分析</h2><p>使用左侧勾选的参考文本和文风名称。只提炼表达方法，模型分析不等于微调训练。</p>
-    {error && <div role="alert" className="error">{error}</div>}{message && <p role="status">{message}</p>}
+    {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}{message && <p role="status">{message}</p>}
     <label>文风分析模型<select aria-label="文风分析模型" value={model} disabled={busy || running} onChange={e => { setModel(e.target.value); localStorage.setItem(`style-model:${projectId}`, e.target.value); }}><option value="">选择分析连接</option>{connections.map(c => <option key={c.id} value={c.id}>{c.name} · {c.model}</option>)}</select></label>
     <button className="primary" disabled={busy || running || blocked || !sourceIds.length || !name.trim() || !model} onClick={() => void run(async () => { const next = await window.writer.startStyleLearning({ projectId, sourceIds, name, connectionId: model, expectedHash: snapshot.hash }); setTasks(current => [next, ...current]); setSelected(next.id); })}>用模型分析选中语料</button>
     <p>仅发送本书选中的参考样本，不发送正文、人物或世界观。长文本分散采样，可能遗漏局部风格；调用可能计费。</p>

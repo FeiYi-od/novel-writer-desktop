@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { emptyCharacter } from '../src/core/characters';
 
 // R19-1: an entry triggered by the chapter text must reach the real provider request body.
 async function main() {
@@ -20,7 +21,14 @@ async function main() {
   const fixture = path.resolve('.artifacts', `world-context-${Date.now()}`), folder = path.join(fixture, '注入小说');
   await fs.mkdir(folder, { recursive: true });
   const worldFile = path.join(fixture, '北方世界.json');
-  await fs.writeFile(worldFile, JSON.stringify({ entries: { '0': { key: ['北门'], content: '北门在雨夜关闭，守门人不收铜钱。', order: 5 } } }, null, 2), 'utf8');
+  await fs.writeFile(worldFile, JSON.stringify({ entries: {
+    '0': { key: ['北门'], content: '北门在雨夜关闭，守门人不收铜钱。', order: 5 },
+    '1': { key: ['北门'], content: '甲的酒馆标签设定。', characterFilter: { isExclude: false, names: ['avatar-a'], tags: ['tag-red'] } },
+    '2': { key: ['北门'], content: '不应跨角色拼接。', characterFilter: { isExclude: false, names: ['avatar-a'], tags: ['tag-blue'] } },
+    '3': { key: ['北门'], content: '排除角色甲的设定。', characterFilter: { isExclude: true, names: ['avatar-a'], tags: [] } },
+    '4': { key: ['北门'], content: '排除红标签的设定。', characterFilter: { isExclude: true, names: [], tags: ['tag-red'] } },
+    '5': { key: ['北门'], content: '其他角色排除条件。', characterFilter: { isExclude: true, names: ['avatar-c'], tags: ['tag-green'] } }
+  } }, null, 2), 'utf8');
   const require = createRequire(import.meta.url);
   const app = await electron.launch({ executablePath: require('electron'), args: [path.resolve('out/main/index.js')],
     env: { ...process.env, NOVEL_WRITER_TEST_DATA: path.join(fixture, 'app-data') } });
@@ -40,7 +48,18 @@ async function main() {
     await page.getByRole('button', { name: '保存模型连接', exact: true }).click();
     await page.getByText('模型连接已保存', { exact: true }).waitFor();
     const imported = await page.evaluate(async () => window.writer.importWorldBook((await window.writer.listProjects())[0].id));
-    assert.equal(imported?.entries, 1, '世界书应导入成功（模拟文件选择）');
+    assert.equal(imported?.entries, 6, '世界书应导入成功（模拟文件选择）');
+    await page.evaluate(async fields => {
+      const id = (await window.writer.listProjects())[0].id;
+      let cards = await window.writer.readCharacters(id);
+      cards = await window.writer.saveCharacter(id, { fields: { ...fields, name: '角色甲' }, enabled: true }, cards.hash);
+      cards = await window.writer.saveCharacter(id, { fields: { ...fields, name: '角色乙' }, enabled: true }, cards.hash);
+      const mapping = await window.writer.readCharacterTagMappings(id);
+      await window.writer.saveCharacterTagMappings(id, [
+        { characterId: cards.value.cards[0].id, avatarKey: 'avatar-a', tagIds: ['tag-red'] },
+        { characterId: cards.value.cards[1].id, avatarKey: 'avatar-b', tagIds: ['tag-blue'] }
+      ], mapping.hash, cards.hash);
+    }, emptyCharacter());
     const started = await page.evaluate(async () => {
       const id = (await window.writer.listProjects())[0].id;
       const chapter = await window.writer.createChapter(id, 'docx');
@@ -58,6 +77,10 @@ async function main() {
     const system = body.messages.find(message => message.role === 'system')?.content ?? '';
     assert.match(system, /世界书触发条目/u, '系统提示应包含世界书段落');
     assert.match(system, /北门在雨夜关闭/u, '命中的条目内容应出现在请求里');
+    assert.match(system, /甲的酒馆标签设定/u, '确认的角色标签设定应进入模拟请求');
+    assert.doesNotMatch(system, /不应跨角色拼接/u, '其他角色的标签不能与甲的头像拼接');
+    assert.doesNotMatch(system, /排除角色甲的设定|排除红标签的设定/u, '任一启用角色触发排除条件时不得进入共享请求');
+    assert.match(system, /其他角色排除条件/u);
     console.log('World context desktop passed: triggered entry reached the real provider request.');
   } finally { await app.evaluate(({ app: instance }) => { instance.exit(0); }).catch(() => {}); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }

@@ -112,9 +112,12 @@ async function main() {
     await start(); const cancelBegan = Date.now();
     assert.equal(await modal().locator('.macro-result').count(), 0);
     assert.ok(await modal().getByTestId('macro-close').isDisabled()); assert.ok(await modal().getByTestId('macro-preview').isDisabled());
+    // 退出保护必须在“操作确实在跑”的当下断言；等 Escape/Tab 之后可能已经跑完，就测不到了。
+    await page.waitForFunction(() => window.dispatchEvent(new Event('beforeunload', { cancelable: true })) === false, undefined, { timeout: 5000 });
     await responsive(); await page.keyboard.press('Escape'); assert.ok(await modal().isVisible());
-    await modal().focus(); await page.keyboard.press('Tab'); assert.equal(await modal().getByTestId('macro-cancel').evaluate(element => element === document.activeElement), true);
-    assert.equal(await page.evaluate(() => window.dispatchEvent(new Event('beforeunload', { cancelable: true }))), false);
+    await modal().focus(); await page.keyboard.press('Tab');
+    // 忙期只要求“焦点仍被限制在弹窗内”，不假设第一个可聚焦控件一定是取消按钮。
+    await page.waitForFunction(() => document.querySelector('[data-testid="macro-panel"]')?.contains(document.activeElement) === true, undefined, { timeout: 5000 });
     const exitError = await page.evaluate(async () => {
       try { const token = await window.writer.beginSaveExit(); await window.writer.cancelSaveExit(token); return ''; }
       catch (error) { return String(error); }

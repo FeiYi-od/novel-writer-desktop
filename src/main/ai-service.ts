@@ -17,6 +17,8 @@ import { copyableText, normalizeParagraphs } from '../core/typography';
 import { selectedStylePrompt } from '../core/style-analysis';
 import { characterContext } from '../core/characters';
 import type { WorldInfoStore } from './world-info';
+import type { CharacterTagMappingStore } from './character-tag-mapping';
+import { worldCharacterContexts } from '../core/world-character-context';
 import { parseCardBook } from '../core/st-cards';
 import { AIConnections, hashText } from './ai-connections';
 import { streamChat } from './ai-provider';
@@ -90,7 +92,7 @@ export class AIService {
   private decisions: ReviewDecisionStore;
   hasPendingWork() { return this.starting || this.live.size > 0 || this.testing || this.pipeline !== null || this.manualBatch !== null || this.reviewActions > 0; }
   private pipeline: { parent: AITask; cancelled: boolean; controller: AbortController } | null = null;
-  constructor(private directory: string, private connections: AIConnections, private workspace: Workspace, private library: LibraryStore, private characters: CharacterStore, private planning?: PlanningStore, private memory?: StoryMemoryStore, private knowledge?: KnowledgeService, private worldInfo?: WorldInfoStore) {
+  constructor(private directory: string, private connections: AIConnections, private workspace: Workspace, private library: LibraryStore, private characters: CharacterStore, private planning?: PlanningStore, private memory?: StoryMemoryStore, private knowledge?: KnowledgeService, private worldInfo?: WorldInfoStore, private characterTagMappings?: CharacterTagMappingStore) {
     this.decisions = new ReviewDecisionStore(directory, id => workspace.getProject(id));
   }
   private reviewAction<T>(action: () => Promise<T>): Promise<T> {
@@ -172,11 +174,13 @@ export class AIService {
    * resolve it from `task.sourceText`; otherwise every world-triggered task looks "stale". */
   private async worldContextFor(projectId: string, sourceText: string) {
     if (!this.worldInfo || !sourceText.trim()) return '';
-    const cards = await this.characters.read(projectId).catch(() => null);
-    const enabled = cards ? cards.value.cards.filter(card => card.enabled) : [];
-    const names = cards ? enabled.map(card => card.name) : undefined;
+    const cards = await this.characters.read(projectId);
+    const enabled = cards.value.cards.filter(card => card.enabled);
+    const names = enabled.map(card => card.name);
+    const mapping = this.characterTagMappings ? await this.characterTagMappings.read(projectId) : undefined;
+    const characters = worldCharacterContexts(projectId, cards, mapping);
     const extraWorlds = enabled.map(card => (card.raw as { data?: { character_book?: unknown } } | null)?.data?.character_book).filter(Boolean).map(book => parseCardBook(book)).filter(world => world.entries.length > 0);
-    return (await this.worldInfo.context(projectId, sourceText, names, { extraWorlds }).catch(() => ({ text: '' }))).text;
+    return (await this.worldInfo.context(projectId, sourceText, names, { extraWorlds, characters })).text;
   }
   /** Rebuild only the task's recorded selection; UI selection never changes its basis. */
   private async taskContext(task: AITask) {

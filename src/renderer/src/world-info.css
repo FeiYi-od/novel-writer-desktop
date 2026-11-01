@@ -1,0 +1,22 @@
+.book-modal.world-modal { width: min(920px, 94vw); height: auto; max-height: 90vh; overflow: auto; padding: 24px; }
+.world-modal > header { padding: 0 0 16px; margin-bottom: 16px; border-bottom: 1px solid #dce3d5; }
+.world-modal > header h2 { margin: 0 0 8px; font-size: 18px; }
+.world-modal > header p, .world-modal > p { color: #63705f; font-size: 12px; line-height: 1.7; }
+.world-modal > label:not(.ai-check) { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; font-size: 13px; }
+.world-modal textarea { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #d7decb; border-radius: 7px; font: inherit; resize: vertical; }
+.world-modal .world-tag-toggle { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 13px; }
+.world-modal > .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.world-books { list-style: none; padding: 0; margin: 14px 0; }
+.world-books li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid #e4e8df; }
+.world-books small { color: #758270; }
+.world-hits { padding: 12px 14px; margin: 16px 0; border: 1px solid #dce3d5; border-radius: 8px; background: #f7faf4; }
+.world-hits h3 { margin: 0 0 10px; font-size: 14px; }
+.world-hits ul { padding-left: 20px; margin: 0; }
+.world-hits li { padding: 5px 0; }
+.world-hits small { color: #63705f; }
+.world-hits pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; font: inherit; font-size: 13px; }
+.world-modal > footer { border-top: 1px solid #dce3d5; padding-top: 16px; margin-top: 16px; }
+.tag-mapping-row { padding: 14px; margin: 12px 0; border: 1px solid #dce3d5; border-radius: 8px; background: #f7faf4; }
+.tag-mapping-row > label:not(.ai-check) { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; font-size: 13px; }
+.tag-mapping-row > .ai-check { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+.tag-mapping-row input:not([type=checkbox]) { padding: 9px; border: 1px solid #d7decb; border-radius: 7px; font: inherit; }

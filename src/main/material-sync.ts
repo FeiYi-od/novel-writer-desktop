@@ -3,13 +3,14 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import JSZip from 'jszip';
-import type { MaterialHistoryArchiveResult, MaterialHistoryCapacity, MaterialHistoryCapacitySnapshot, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryFile, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportRequest, MaterialHistoryImportResult, MaterialHistoryPreview, MaterialHistoryRequest, MaterialHistorySnapshot, MaterialHistoryVersion, MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
+import type { MaterialHistoryArchiveResult, MaterialHistoryCapacity, MaterialHistoryCapacitySnapshot, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryRestoreResult, MaterialHistoryFile, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportRequest, MaterialHistoryImportResult, MaterialHistoryPreview, MaterialHistoryRequest, MaterialHistorySnapshot, MaterialHistoryVersion, MaterialSyncDifference, MaterialSyncRequest, MaterialSyncSnapshot } from '../shared/material-sync';
 import { MATERIAL_HISTORY_LIMIT, MATERIAL_HISTORY_WARNING_AT } from '../shared/material-sync';
 import type { Workspace } from './workspace';
 import { isSafeRelative } from './nas-backup';
 import { parseMaterialHistoryArchive } from './material-history-zip';
 import { encodeMaterialHistoryDag, parseMaterialHistoryDag, MATERIAL_DAG_LIMITS, type MaterialDagManifest, type MaterialDagContents } from './material-history-dag';
 import type { MaterialHistoryDagPreview, MaterialHistoryDagRequest, MaterialHistoryDagArchiveResult, MaterialHistoryDagImportPreview, MaterialHistoryDagImportRequest, MaterialHistoryDagImportResult } from '../shared/material-sync';
+import type { MaterialHistoryRetainRequest, MaterialHistoryRetainResult, MaterialHistoryReclaimRequest, MaterialHistoryReclaimResult, MaterialHistoryTransportReclaimRequest } from '../shared/material-sync';
 
 const META = '小说资料', TRANSPORT = '创作资料同步', VERSIONS = '版本';
 const MAX_FILE = 32 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024, MAX_FILES = 10000, MAX_REVISIONS = MATERIAL_HISTORY_LIMIT;
@@ -25,6 +26,13 @@ const requestSchema = z.object({ projectId: z.uuid(), fingerprint: hashSchema.op
   resolutions: z.array(z.object({ path: relativeSchema, source: z.enum(['local', 'remote']) }).strict()).max(MAX_FILES).optional() }).strict();
 const historyRequestSchema = z.object({ projectId: z.uuid(), source: z.enum(['local', 'transport']), id: z.uuid(), path: relativeSchema.optional(), fingerprint: hashSchema.optional() }).strict();
 const historyCopySchema = z.object({ projectId: z.uuid(), source: z.enum(['local', 'transport']), id: z.uuid(), fingerprint: hashSchema }).strict();
+const historyRetainSchema = z.object({ projectId: z.uuid(), id: z.uuid(), fingerprint: hashSchema }).strict();
+const historyReclaimSchema = z.object({ projectId: z.uuid(), id: z.uuid(), fingerprint: hashSchema, confirm: z.literal('回收') }).strict();
+const historyTransportReclaimSchema = historyReclaimSchema;
+const reclaimRecordSchema = z.object({ schemaVersion: z.literal(1), projectId: z.uuid(), id: z.uuid(), files: z.number().int().min(0), bytes: z.number().int().min(0),
+  fingerprint: hashSchema, retainedIdentity: z.string(), bookIdentity: z.string(), reclaimedAt: z.iso.datetime() }).strict();
+const retentionJournalSchema = z.object({ schemaVersion: z.literal(1), kind: z.literal('local-history-retention'),
+  projectId: z.uuid(), id: z.uuid(), bookIdentity: hashSchema, treeFingerprint: hashSchema, createdAt: z.iso.datetime() }).strict();
 const historyImportSchema = z.object({ projectId: z.uuid(), token: z.uuid(), fingerprint: hashSchema, path: relativeSchema.optional() }).strict();
 const historyImportCopySchema = z.object({ projectId: z.uuid(), token: z.uuid(), fingerprint: hashSchema }).strict();
 const MAX_IMPORT_ARCHIVE = 80 * 1024 * 1024, MAX_IMPORT_MANIFEST = 8 * 1024 * 1024;
@@ -35,7 +43,7 @@ type State = z.infer<typeof stateSchema>;
 interface Tree { entries: Entry[]; data: Map<string, Buffer>; fingerprint: string }
 interface Revision { manifest: Manifest; folder: string }
 interface HistoryContext { projectId: string; source: 'local' | 'transport'; id: string; book: string; bookIdentity: string;
-  current: Tree; history: Tree; fingerprint: string }
+  current: Tree; history: Tree; fingerprint: string; folder: string; contentRoot: string | null; canonical: string | null }
 interface HistoryImportTicket { projectId: string; token: string; file: string; fingerprint: string; expiresAt: number; consumed: boolean }
 interface HistoryImportContext { ticket: HistoryImportTicket; book: string; bookIdentity: string; current: Tree; history: Tree; fingerprint: string;
   archive: Awaited<ReturnType<typeof parseMaterialHistoryArchive>>; completionHash: string }
@@ -213,6 +221,42 @@ async function scanTree(root: string, projectId: string, budget?: { bytes: numbe
   };
   await walk(root, 0); const result = fromData(data); checkPaths(result.entries); return result;
 }
+/** Bind all directory identities as well as contents; a file-only fingerprint
+ * cannot detect replaced or nested empty directories. The complete DAG v1
+ * cannot encode nested empty directories, so retention refuses those. */
+async function retentionTree(root: string, projectId: string) {
+  const inventory: { path: string; type: string; dev: number; ino: number; size?: number; mtime?: number; ctime?: number }[] = [];
+  let count = 0;
+  const walk = async (directory: string, relative: string, depth: number) => {
+    if (depth > 30) throw new Error('本机历史目录层级过深');
+    await checkedDirectory(directory); const before = await fs.lstat(directory);
+    inventory.push({ path: relative, type: 'dir', dev: before.dev, ino: before.ino,
+      ...(relative ? { mtime: before.mtimeMs, ctime: before.ctimeMs } : {}) });
+    for await (const item of await fs.opendir(directory)) {
+      if (++count > MAX_FILES) throw new Error('本机历史目录条目超过10000个');
+      const child = relative ? `${relative}/${item.name}` : item.name; relativeSchema.parse(child);
+      const file = path.join(directory, item.name), stat = await fs.lstat(file);
+      if (stat.isSymbolicLink()) throw new Error('本机历史包含目录链接或符号链接');
+      if (stat.isDirectory()) await walk(file, child, depth + 1);
+      else {
+        if (!stat.isFile() || stat.nlink !== 1) throw new Error('本机历史包含硬链接或非普通文件');
+        inventory.push({ path: child, type: 'file', dev: stat.dev, ino: stat.ino, size: stat.size, mtime: stat.mtimeMs, ctime: stat.ctimeMs });
+      }
+    }
+    const after = await fs.lstat(directory); await checkedDirectory(directory);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
+      throw new Error('本机历史目录在核对期间变化');
+  };
+  const snapshot = async () => {
+    inventory.length = 0; count = 0; await walk(root, '', 0);
+    return [...inventory].sort((a, b) => a.path.localeCompare(b.path));
+  };
+  const before = await snapshot();
+  const tree = await scanTree(root, projectId, { bytes: MAX_TOTAL, files: MAX_FILES, metadataBytes: MATERIAL_DAG_LIMITS.manifestBytes });
+  const after = await snapshot();
+  if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error('本机历史在核对期间变化，请重新预览');
+  return { fingerprint: hash(JSON.stringify({ inventory: before, entries: tree.entries })), tree };
+}
 function preview(data: Buffer | undefined, relative: string) {
   if (!data || !/\.(?:md|txt|json)$/iu.test(relative)) return undefined;
   return data.toString('utf8').slice(0, 1600);
@@ -236,6 +280,11 @@ export class MaterialSyncService {
   constructor(private readonly workspace: Workspace, private readonly materialsRoot: string, private readonly userData: string) {}
   private serial<T>(action: () => Promise<T>): Promise<T> { const result = this.queue.then(action); this.queue = result.catch(() => {}); return result; }
   private project(projectId: string) { return this.workspace.getProject(z.uuid().parse(projectId)); }
+  private retentionJournal(projectId: string) { return path.join(this.userData, 'material-sync', `${projectId}-retention.json`); }
+  private syncPending(projectId: string) { return path.join(this.userData, 'material-sync', `${projectId}-pending.json`); }
+  private async noSyncPending(projectId: string) {
+    if (await statOrNull(this.syncPending(projectId))) throw new Error('资料同步换入记录尚未处理，本机历史不能移动或恢复，原件均保留');
+  }
   private async stateLocation(projectId: string) {
     const base = await rootDirectory(this.userData); return path.join((await subDirectory(base, 'material-sync', true))!, `${projectId}.json`);
   }
@@ -256,6 +305,7 @@ export class MaterialSyncService {
     await checkedDirectory(path.dirname(file)); await fs.rename(temporary, file);
   }
   private async recoverPending(projectId: string) {
+    if (await statOrNull(this.retentionJournal(projectId))) throw new Error('本机历史保留记录尚未核对，请先打开资料历史，原件均保留');
     const directory = path.dirname(await this.stateLocation(projectId)), filename = `${projectId}-pending.json`, file = path.join(directory, filename);
     if (!await statOrNull(file)) return;
     const raw = (await readRegular(directory, filename, 16384)).toString('utf8'); let pending: z.infer<typeof pendingSchema>;
@@ -319,31 +369,71 @@ export class MaterialSyncService {
     return fromData(data);
   }
   private historyDirectory(projectId: string) { return path.join(this.materialsRoot, '同步历史', projectId); }
-  /** History reads intentionally do not inspect synchronization state or replay a
-   * pending canonical swap. They remain available while sharing is disabled. */
-  private async historyLocations(projectId: string) {
-    const locations = await this.bookLocations(projectId, false), stat = await fs.lstat(locations.book);
-    const meta = (await subDirectory(locations.book, META, false))!;
+  private async bookIdentity(projectId: string, book: string) {
+    const stat = await fs.lstat(book); await checkedDirectory(book);
+    const meta = await subDirectory(book, META, false); if (!meta) throw new Error('本书归属资料缺失');
     const projectRaw = await readRegular(meta, 'project.json', 1024 * 1024);
     let project: any; try { project = JSON.parse(projectRaw.toString('utf8')); } catch { throw new Error('本书归属资料损坏'); }
     if (project.schemaVersion !== 1 || project.id !== projectId) throw new Error('本书归属已变化，资料历史操作已停止');
-    const bookIdentity = hash(JSON.stringify({ book: locations.book, dev: stat.dev, ino: stat.ino, project: hash(projectRaw) }));
+    return hash(JSON.stringify({ book, dev: stat.dev, ino: stat.ino, project: hash(projectRaw) }));
+  }
+  private async resolveRetentionJournal(projectId: string, book: string, bookIdentity: string, active: string | null, retained: string | null) {
+    const file = this.retentionJournal(projectId), stat = await statOrNull(file);
+    if (!stat) return;
+    await this.noSyncPending(projectId);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('本机历史保留记录类型异常，原件均保留');
+    const directory = path.dirname(file), name = path.basename(file);
+    await checkedDirectory(directory);
+    const raw = await readRegular(directory, name, 16384);
+    let journal: z.infer<typeof retentionJournalSchema>;
+    try { journal = retentionJournalSchema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw))); }
+    catch { throw new Error('本机历史保留记录损坏或版本不受支持，原件均保留'); }
+    if (journal.projectId !== projectId || journal.bookIdentity !== bookIdentity) throw new Error('本机历史保留记录归属不匹配，原件均保留');
+    const activeIdentity = active ? await this.dagDirectoryIdentity(active) : null, retainedIdentity = retained ? await this.dagDirectoryIdentity(retained) : null;
+    const source = active ? path.join(active, journal.id) : null, target = retained ? path.join(retained, journal.id) : null;
+    const sourceExists = !!(source && await statOrNull(source)), targetExists = !!(target && await statOrNull(target));
+    if (sourceExists === targetExists) throw new Error('本机历史保留中断后两侧同时存在或均不存在，原件和记录均保留');
+    const selected = sourceExists ? source! : target!;
+    if ((await retentionTree(selected, projectId)).fingerprint !== journal.treeFingerprint) throw new Error('本机历史保留中断后内容或目录已变化，原件和记录均保留');
+    await this.noSyncPending(projectId);
+    if (await this.bookIdentity(projectId, book) !== bookIdentity) throw new Error('本书归属在保留恢复期间变化');
+    if (!!(source && await statOrNull(source)) !== sourceExists || !!(target && await statOrNull(target)) !== targetExists
+      || (await retentionTree(selected, projectId)).fingerprint !== journal.treeFingerprint) throw new Error('本机历史保留恢复期间变化，记录和原件均保留');
+    await this.noSyncPending(projectId);
+    const root = await checkedDirectory(this.materialsRoot), activeAgain = await subDirectory(root, `同步历史/${projectId}`, false), retainedAgain = await subDirectory(root, `同步历史保留/${projectId}`, false);
+    if (activeAgain !== active || retainedAgain !== retained
+      || (activeAgain && await this.dagDirectoryIdentity(activeAgain)) !== activeIdentity
+      || (retainedAgain && await this.dagDirectoryIdentity(retainedAgain)) !== retainedIdentity)
+      throw new Error('本机历史目录在保留恢复期间出现、消失或变化，记录和原件均保留');
+    const latest = await fs.lstat(file);
+    if (latest.isSymbolicLink() || !latest.isFile() || latest.nlink !== 1 || latest.dev !== stat.dev || latest.ino !== stat.ino
+      || !(await readRegular(directory, name, 16384)).equals(raw)) throw new Error('本机历史保留记录在核对期间变化');
+    await fs.unlink(file);
+  }
+  /** History reads intentionally do not inspect synchronization state or replay a
+   * pending canonical swap. They remain available while sharing is disabled. */
+  private async historyLocations(projectId: string, recoverRetention = false) {
+    const locations = await this.bookLocations(projectId, false), bookIdentity = await this.bookIdentity(projectId, locations.book);
     const base = await statOrNull(this.materialsRoot) ? await checkedDirectory(this.materialsRoot) : null;
     const localHistory = base ? await subDirectory(base, `同步历史/${projectId}`, false) : null;
+    const retainedHistory = base ? await subDirectory(base, `同步历史保留/${projectId}`, false) : null;
     const canonical = base ? await subDirectory(base, projectId, false) : null;
-    return { ...locations, bookIdentity, localHistory, canonical };
+    if (await statOrNull(this.retentionJournal(projectId))) {
+      if (!recoverRetention) throw new Error('本机历史保留记录尚未核对，请先打开资料历史，原件均保留');
+      await this.resolveRetentionJournal(projectId, locations.book, bookIdentity, localHistory, retainedHistory);
+    }
+    return { ...locations, bookIdentity, localHistory, retainedHistory, canonical };
   }
   history(projectId: string): Promise<MaterialHistorySnapshot> {
     const id = z.uuid().parse(projectId); this.project(id);
     return this.serial(async () => {
-      const locations = await this.historyLocations(id), versions: MaterialHistoryVersion[] = [];
-      if (locations.localHistory) {
-        const names = await fs.readdir(locations.localHistory);
-        if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个条目，已停止读取；请保留完整历史，ZIP留档不会释放名额');
-        for (const name of names) {
-          z.uuid().parse(name); const folder = path.join(locations.localHistory, name); await checkedDirectory(folder);
+      const locations = await this.historyLocations(id, true), versions: MaterialHistoryVersion[] = [];
+      const local = await this.localInventories(locations.localHistory, locations.retainedHistory);
+      for (const [root, names, location] of [[locations.localHistory, local.active.names, 'active'], [locations.retainedHistory, local.retained.names, 'retained']] as const) {
+        if (root) for (const name of names) {
+          const folder = path.join(root, name); await checkedDirectory(folder);
           const stat = await fs.lstat(folder);
-          versions.push({ source: 'local', id: name, createdAt: stat.mtime.toISOString(), files: null, bytes: null });
+          versions.push({ source: 'local', location, id: name, createdAt: stat.mtime.toISOString(), files: null, bytes: null });
         }
       }
       for (const revision of await this.readRevisions(locations.versions, id)) {
@@ -379,15 +469,190 @@ export class MaterialSyncService {
     if (await this.dagDirectoryIdentity(directory) !== identity) throw new Error('完整历史目录在读取期间变化，请重新核对');
     return { identity, names };
   }
-  private async dagDirectoryIdentity(directory: string) {
+  private async localInventories(active: string | null, retained: string | null) {
+    const first = await this.dagInventory(active), second = await this.dagInventory(retained);
+    const all = [...first.names, ...second.names];
+    if (all.length > MATERIAL_DAG_LIMITS.localVersions || new Set(all.map(name => name.toLowerCase())).size !== all.length)
+      throw new Error('本机历史活动区与保留区ID重复或超出2000条，未跳过任何历史');
+    return { active: first, retained: second };
+  }
+  retainHistory(input: MaterialHistoryRetainRequest): Promise<MaterialHistoryRetainResult> {
+    const request = historyRetainSchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      await this.noSyncPending(request.projectId);
+      const initial = await this.inspectHistory({ projectId: request.projectId, source: 'local', id: request.id, fingerprint: request.fingerprint });
+      let locations = await this.historyLocations(request.projectId);
+      let inventory = await this.localInventories(locations.localHistory, locations.retainedHistory);
+      if (!locations.localHistory || !inventory.active.names.includes(request.id) || inventory.retained.names.some(name => name.toLowerCase() === request.id.toLowerCase()))
+        throw new Error('所选本机历史不在活动区或保留区已有同名记录');
+      if (inventory.retained.names.length >= MAX_REVISIONS) throw new Error('本机历史保留区已满，未移动或删除历史');
+      const root = await rootDirectory(this.materialsRoot), retainedRoot = (await subDirectory(root, `同步历史保留/${request.projectId}`, true))!;
+      locations = await this.historyLocations(request.projectId);
+      inventory = await this.localInventories(locations.localHistory, locations.retainedHistory);
+      if (!locations.localHistory || locations.retainedHistory !== retainedRoot || inventory.retained.names.length >= MAX_REVISIONS) throw new Error('本机历史目录或容量已变化');
+      await this.inspectHistory({ projectId: request.projectId, source: 'local', id: request.id, fingerprint: request.fingerprint });
+      const source = (await subDirectory(locations.localHistory, request.id, false))!, target = path.join(retainedRoot, request.id);
+      if (!source || await statOrNull(target)) throw new Error('本机历史源或目标目录已变化，未移动历史');
+      const frozen = await retentionTree(source, request.projectId), sourceParentIdentity = await this.dagDirectoryIdentity(locations.localHistory), targetParentIdentity = await this.dagDirectoryIdentity(retainedRoot);
+      const canonicalIdentity = locations.canonical ? await this.dagDirectoryIdentity(locations.canonical) : null;
+      await this.noSyncPending(request.projectId);
+      if (await this.bookIdentity(request.projectId, locations.book) !== initial.bookIdentity) throw new Error('本书归属已变化');
+      const file = this.retentionJournal(request.projectId), state = await this.stateLocation(request.projectId); await checkedDirectory(path.dirname(state));
+      const journal = { schemaVersion: 1 as const, kind: 'local-history-retention' as const, projectId: request.projectId, id: request.id,
+        bookIdentity: initial.bookIdentity, treeFingerprint: frozen.fingerprint, createdAt: new Date().toISOString() };
+      const handle = await fs.open(file, 'wx');
+      try { await handle.writeFile(JSON.stringify(journal)); await handle.sync(); } finally { await handle.close(); }
+      // After recording intent, any ambiguous state leaves the record and all
+      // source files intact for explicit recovery; the destination is checked
+      // immediately before rename, without claiming external-process CAS.
+      await this.noSyncPending(request.projectId);
+      if ((await retentionTree(source, request.projectId)).fingerprint !== frozen.fingerprint)
+        throw new Error('本机历史移动前内容已变化，原件和记录均保留');
+      const activeAgain = await subDirectory(root, `同步历史/${request.projectId}`, false), retainedAgain = await subDirectory(root, `同步历史保留/${request.projectId}`, false), canonicalAgain = await subDirectory(root, request.projectId, false);
+      if (activeAgain !== locations.localHistory || retainedAgain !== retainedRoot || canonicalAgain !== locations.canonical
+        || await this.dagDirectoryIdentity(locations.localHistory) !== sourceParentIdentity
+        || await this.dagDirectoryIdentity(retainedRoot) !== targetParentIdentity
+        || (canonicalAgain ? await scanTree(canonicalAgain, request.projectId) : emptyTree()).fingerprint !== initial.current.fingerprint
+        || (canonicalAgain ? await this.dagDirectoryIdentity(canonicalAgain) : null) !== canonicalIdentity
+        || await this.bookIdentity(request.projectId, locations.book) !== initial.bookIdentity || await statOrNull(target))
+        throw new Error('本机历史移动前目录或内容已变化，原件和记录均保留');
+      // Book/canonical checks above involve awaits. Re-read the frozen source
+      // afterwards so an external edit during those checks cannot be moved on
+      // the strength of the earlier scan. Ordinary rename is not a cross-
+      // process compare-and-swap; ambiguous outcomes keep the journal.
+      if ((await retentionTree(source, request.projectId)).fingerprint !== frozen.fingerprint || await statOrNull(target))
+        throw new Error('本机历史移动前内容或目标已变化，原件和记录均保留');
+      await fs.rename(source, target);
+      await this.resolveRetentionJournal(request.projectId, locations.book, initial.bookIdentity, locations.localHistory, retainedRoot);
+      return { schemaVersion: 1, projectId: request.projectId, id: request.id, location: 'retained', files: frozen.tree.entries.length,
+        bytes: frozen.tree.entries.reduce((sum, entry) => sum + entry.bytes, 0) };
+    });
+  }
+  private reclaimLog(projectId: string) { return path.join(this.userData, 'material-sync', `${projectId}-reclaims.json`); }
+  /** 回收记录只写在应用数据目录，不进入书内目录；读取失败时拒绝继续，避免覆盖旧记录。 */
+  private async appendReclaimRecord(projectId: string, record: z.infer<typeof reclaimRecordSchema>) {
+    const file = this.reclaimLog(projectId); await fs.mkdir(path.dirname(file), { recursive: true });
+    let records: unknown[] = [];
+    if (await statOrNull(file)) {
+      const raw = (await readRegular(path.dirname(file), path.basename(file), 4 * 1024 * 1024)).toString('utf8');
+      const parsed = z.array(reclaimRecordSchema).max(500).parse(JSON.parse(raw));
+      if (parsed.some(item => item.id === record.id)) throw new Error('该历史已有回收记录');
+      records = parsed;
+    }
+    // 记录条数有上限：超过 500 条时丢最旧的，而不是让第 501 次回收在删除成功后报写入失败。
+    if (records.length >= 500) records.shift();
+    records.push(record);
+    const temporary = path.join(path.dirname(file), `reclaims-${randomUUID()}.tmp`);
+    await fs.writeFile(temporary, JSON.stringify(records, null, 2), { flag: 'wx' });
+    await checkedDirectory(path.dirname(file)); await fs.rename(temporary, file);
+  }
+  /** 回收保留区历史：释放磁盘，但绝不动活动区、书内传输版本和完整ZIP归档。
+   * 普通文件系统没有跨进程原子删除，删除前后各复核一次身份与内容。 */
+  reclaimHistory(input: MaterialHistoryReclaimRequest): Promise<MaterialHistoryReclaimResult> {
+    const request = historyReclaimSchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      await this.noSyncPending(request.projectId);
+      for (const ticket of [...this.historyImportTickets.values(), ...this.dagImportTickets.values()]) {
+        if (ticket.projectId === request.projectId && !ticket.consumed) throw new Error('有未完成的资料历史导入，已停止回收');
+      }
+      const locations = await this.historyLocations(request.projectId, true);
+      const inventory = await this.localInventories(locations.localHistory, locations.retainedHistory);
+      if (inventory.active.names.some(name => name.toLowerCase() === request.id.toLowerCase()))
+        throw new Error('活动区的历史不能直接回收；请先确认为保留区，或另存完整归档');
+      if (!locations.retainedHistory || !inventory.retained.names.includes(request.id))
+        throw new Error('所选历史不在保留区，未删除任何文件');
+      // 用与预览一致的指纹语义复核（含书籍归属、目录身份与当前资料），
+      // 再用 retentionTree 额外拒绝链接、硬链接与嵌套空目录。
+      const context = await this.inspectHistory({ projectId: request.projectId, source: 'local', id: request.id, fingerprint: request.fingerprint });
+      // 与传输回收一致：本机上次同步的基线版本（同 ID）不能删，否则完整历史与后续同步都会缺基线。
+      const state = await this.readState(request.projectId);
+      if (state.state.lastRevision === request.id) throw new Error('该历史是本机上次同步的基线，回收会让后续同步与完整历史缺基线；请先完成一次新同步再回收');
+      const target = context.folder;
+      const frozen = await retentionTree(target, request.projectId);
+      // 父版本保护：任何传输版本把它当作父版本时，删除会破坏完整历史的DAG。
+      // 只读各版本自己的清单（未完成传输没有清单时跳过），不要求整份文件齐全。
+      for (const parent of await this.revisionParents(locations.versions, request.projectId)) {
+        if (parent === request.id) throw new Error('该历史仍是其他版本的父版本，不能回收');
+      }
+      const retainedIdentity = await this.dagDirectoryIdentity(locations.retainedHistory);
+      const bookIdentity = await this.bookIdentity(request.projectId, locations.book);
+      if ((await retentionTree(target, request.projectId)).fingerprint !== frozen.fingerprint)
+        throw new Error('回收前历史内容已变化，未删除任何文件');
+      if (await this.dagDirectoryIdentity(locations.retainedHistory) !== retainedIdentity
+        || await this.bookIdentity(request.projectId, locations.book) !== bookIdentity)
+        throw new Error('回收前目录或书籍归属已变化，未删除任何文件');
+      await fs.rm(target, { recursive: true });
+      const record = { schemaVersion: 1 as const, projectId: request.projectId, id: request.id,
+        files: frozen.tree.entries.length, bytes: frozen.tree.entries.reduce((sum, entry) => sum + entry.bytes, 0),
+        fingerprint: frozen.fingerprint, retainedIdentity, bookIdentity, reclaimedAt: new Date().toISOString() };
+      try { await this.appendReclaimRecord(request.projectId, record); }
+      catch { throw new Error('历史文件已回收，但回收记录写入失败；请在应用数据目录核对 material-sync 记录'); }
+      return { schemaVersion: 1, projectId: request.projectId, id: request.id, files: record.files, bytes: record.bytes, reclaimedAt: record.reclaimedAt };
+    });
+  }
+  /** 回收书内传输历史的一个叶子版本：释放磁盘与名额，但拒绝删除仍是其他版本父版本的条目。 */
+  reclaimTransportHistory(input: MaterialHistoryTransportReclaimRequest): Promise<MaterialHistoryReclaimResult> {
+    const request = historyTransportReclaimSchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      await this.noSyncPending(request.projectId);
+      for (const ticket of [...this.historyImportTickets.values(), ...this.dagImportTickets.values()]) {
+        if (ticket.projectId === request.projectId && !ticket.consumed) throw new Error('有未完成的资料历史导入，已停止回收');
+      }
+      const locations = await this.bookLocations(request.projectId, false);
+      const context = await this.inspectHistory({ projectId: request.projectId, source: 'transport', id: request.id, fingerprint: request.fingerprint });
+      for (const parent of await this.revisionParents(locations.versions, request.projectId)) {
+        if (parent === request.id) throw new Error('该传输版本仍是其他版本的父版本，不能回收');
+      }
+      // 本机上次同步的基线版本不能回收：删掉后 synchronize 会因基线缺失直接失败。
+      const state = await this.readState(request.projectId);
+      if (state.state.lastRevision === request.id) throw new Error('该传输版本是本机上次同步的基线，回收会让后续同步无法继续；请先完成一次新同步再回收');
+      const folder = context.folder;
+      const manifestHash = hash(await readRegular(folder, 'manifest.json', 2 * 1024 * 1024));
+      const parentIdentity = await this.dagDirectoryIdentity(locations.versions);
+      const bookIdentity = await this.bookIdentity(request.projectId, locations.book);
+      // 删除前再核对一次清单与父目录身份：普通文件系统没有跨进程原子删除。
+      if (hash(await readRegular(folder, 'manifest.json', 2 * 1024 * 1024)) !== manifestHash
+        || await this.dagDirectoryIdentity(locations.versions) !== parentIdentity
+        || await this.bookIdentity(request.projectId, locations.book) !== bookIdentity)
+        throw new Error('回收前传输版本或目录已变化，未删除任何文件');
+      await this.inspectHistory({ projectId: request.projectId, source: 'transport', id: request.id, fingerprint: request.fingerprint });
+      await fs.rm(folder, { recursive: true });
+      const record = { schemaVersion: 1 as const, projectId: request.projectId, id: request.id,
+        files: context.history.entries.length, bytes: context.history.entries.reduce((sum, entry) => sum + entry.bytes, 0),
+        fingerprint: context.fingerprint, retainedIdentity: parentIdentity, bookIdentity, reclaimedAt: new Date().toISOString() };
+      try { await this.appendReclaimRecord(request.projectId, record); }
+      catch { throw new Error('传输历史已回收，但回收记录写入失败；请在应用数据目录核对 material-sync 记录'); }
+      return { schemaVersion: 1, projectId: request.projectId, id: request.id, files: record.files, bytes: record.bytes, reclaimedAt: record.reclaimedAt };
+    });
+  }
+  /** 只读传输清单里的父版本关系：未完成传输（没有清单）跳过，清单损坏或归属不符则停止回收。 */
+  private async revisionParents(versions: string, projectId: string) {
+    if (!await statOrNull(versions)) return [] as string[];
+    await checkedDirectory(versions);
+    const names = await fs.readdir(versions);
+    if (names.length > MAX_REVISIONS) throw new Error('资料同步目录超过1000个条目，已停止回收历史');
+    const parents: string[] = [];
+    for (const name of names) {
+      z.uuid().parse(name);
+      const folder = path.join(versions, name), stat = await fs.lstat(folder);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+      if (!await statOrNull(path.join(folder, 'manifest.json'))) continue;
+      let manifest: Manifest;
+      try { manifest = manifestSchema.parse(JSON.parse((await readRegular(folder, 'manifest.json', 2 * 1024 * 1024)).toString('utf8'))); }
+      catch { throw new Error('资料同步清单损坏，无法确认历史占用，已停止回收'); }
+      if (manifest.projectId !== projectId) throw new Error('资料同步清单归属不匹配，已停止回收');
+      parents.push(...manifest.parents);
+    }
+    return parents;
+  }  private async dagDirectoryIdentity(directory: string) {
     const real = await checkedDirectory(directory), stat = await fs.lstat(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('完整历史归档目录身份异常');
     return JSON.stringify({ real, dev: stat.dev, ino: stat.ino, mtime: stat.mtimeMs, ctime: stat.ctimeMs });
   }
   private async inspectHistoryDag(projectId: string): Promise<DagContext> {
     const locations = await this.historyLocations(projectId);
-    const localInventory = await this.dagInventory(locations.localHistory), transportInventory = await this.dagInventory(locations.versions);
-    if (!localInventory.names.length && !transportInventory.names.length) throw new Error('暂无可完整归档的资料历史');
+    const localInventory = await this.localInventories(locations.localHistory, locations.retainedHistory), transportInventory = await this.dagInventory(locations.versions);
+    if (!localInventory.active.names.length && !localInventory.retained.names.length && !transportInventory.names.length) throw new Error('暂无可完整归档的资料历史');
     const transport: MaterialDagManifest['transport'] = [], local: MaterialDagManifest['local'] = [];
     const blobs = new Map<string, Buffer>(), revisions: { id: string; folder: string; manifest: Manifest; raw: Buffer; identity: string }[] = [];
     const identities: unknown[] = []; let rawBytes = 0, referencedBytes = 0, references = 0, uniqueBytes = 0, localMetadataBytes = 0;
@@ -444,8 +709,9 @@ export class MaterialSyncService {
         || (files && await this.dagDirectoryIdentity(files) !== filesIdentity)) throw new Error('历史版本在归档核对期间变化');
       identities.push({ id: revision.id, source: 'transport', identity: revision.identity, filesIdentity });
     }
-    for (const id of localInventory.names) {
-      const folder = (await subDirectory(locations.localHistory!, id, false))!;
+    const localLocations = [...localInventory.active.names.map(id => ({ id, root: locations.localHistory! })), ...localInventory.retained.names.map(id => ({ id, root: locations.retainedHistory! }))];
+    for (const { id, root } of localLocations) {
+      const folder = (await subDirectory(root, id, false))!;
       if (!folder) throw new Error('本机归档在读取期间消失');
       const identity = await this.dagDirectoryIdentity(folder), stat = await fs.lstat(folder);
       const tree = await scanTree(folder, projectId, { bytes: MATERIAL_DAG_LIMITS.referencedBytes - referencedBytes,
@@ -458,14 +724,14 @@ export class MaterialSyncService {
     }
     const checkLocations = async () => {
       const latest = await this.historyLocations(projectId);
-      if (latest.bookIdentity !== locations.bookIdentity || latest.localHistory !== locations.localHistory || latest.versions !== locations.versions)
+      if (latest.bookIdentity !== locations.bookIdentity || latest.localHistory !== locations.localHistory || latest.retainedHistory !== locations.retainedHistory || latest.versions !== locations.versions)
         throw new Error('完整历史目录或本书归属在核对期间变化');
       return latest;
     };
     // In particular, re-resolve an initially absent local root. Otherwise a
     // first local archive created during this scan could be silently omitted.
     const latest = await checkLocations();
-    if (JSON.stringify(await this.dagInventory(latest.localHistory)) !== JSON.stringify(localInventory)
+    if (JSON.stringify(await this.localInventories(latest.localHistory, latest.retainedHistory)) !== JSON.stringify(localInventory)
       || JSON.stringify(await this.dagInventory(latest.versions)) !== JSON.stringify(transportInventory)) throw new Error('完整历史在核对期间变化');
     await checkLocations();
     // The final location check itself reads book metadata. Check root identity
@@ -475,7 +741,8 @@ export class MaterialSyncService {
         if (await statOrNull(directory)) throw new Error('完整历史目录在核对期间出现，请重新预览');
       } else if (await this.dagDirectoryIdentity(directory) !== identity) throw new Error('完整历史目录在核对期间变化，请重新预览');
     };
-    await finalRoot(locations.localHistory ?? path.join(this.materialsRoot, '同步历史', projectId), localInventory.identity);
+    await finalRoot(locations.localHistory ?? path.join(this.materialsRoot, '同步历史', projectId), localInventory.active.identity);
+    await finalRoot(locations.retainedHistory ?? path.join(this.materialsRoot, '同步历史保留', projectId), localInventory.retained.identity);
     await finalRoot(locations.versions, transportInventory.identity);
     const fingerprint = hash(JSON.stringify({ projectId, bookIdentity: locations.bookIdentity, localInventory, transportInventory, transport, local, leaves, identities }));
     const planned = { schemaVersion: 1, kind: 'material-history-dag-archive', projectId, archiveId: '00000000-0000-4000-8000-000000000000',
@@ -531,14 +798,14 @@ export class MaterialSyncService {
   private async inspectHistory(request: MaterialHistoryRequest): Promise<HistoryContext> {
     const locations = await this.historyLocations(request.projectId);
     const current = locations.canonical ? await scanTree(locations.canonical, request.projectId) : emptyTree();
-    let history: Tree, manifestHash: string | null = null, folder: string;
+    let history: Tree, manifestHash: string | null = null, folder: string, contentRoot: string | null;
     if (request.source === 'local') {
-      if (!locations.localHistory) throw new Error('所选本机资料历史不存在，请刷新列表');
-      const names = await fs.readdir(locations.localHistory);
-      if (names.length > MAX_REVISIONS) throw new Error('本机资料历史超过1000个条目，已停止读取；请保留完整历史，ZIP留档不会释放名额');
-      if (!names.includes(request.id)) throw new Error('所选本机资料历史不存在，请刷新列表');
-      folder = (await subDirectory(locations.localHistory, request.id, false))!;
+      const inventories = await this.localInventories(locations.localHistory, locations.retainedHistory);
+      const root = inventories.active.names.includes(request.id) ? locations.localHistory : inventories.retained.names.includes(request.id) ? locations.retainedHistory : null;
+      if (!root) throw new Error('所选本机资料历史不存在，请刷新列表');
+      folder = (await subDirectory(root, request.id, false))!;
       if (!folder) throw new Error('所选本机资料历史不存在，请刷新列表');
+      contentRoot = folder;
       history = await scanTree(folder, request.projectId);
     } else {
       const revisions = await this.readRevisions(locations.versions, request.projectId), revision = revisions.find(value => value.manifest.revisionId === request.id);
@@ -549,6 +816,7 @@ export class MaterialSyncService {
       if (JSON.stringify(latest) !== JSON.stringify(revision.manifest)) throw new Error('资料历史清单在读取期间变化，请重新预览');
       manifestHash = hash(raw);
       const declared = await this.readRevision(revision, request.projectId), files = await subDirectory(folder, 'files', false);
+      contentRoot = files;
       history = files ? await scanTree(files, request.projectId) : emptyTree();
       if (declared.fingerprint !== history.fingerprint) throw new Error('资料历史完整目录与清单不匹配，请等待完整传输');
       if (hash(await readRegular(folder, 'manifest.json', 2 * 1024 * 1024)) !== manifestHash) throw new Error('资料历史清单在读取期间变化，请重新预览');
@@ -559,7 +827,7 @@ export class MaterialSyncService {
       current: current.entries, history: history.entries }));
     if (request.fingerprint !== undefined && request.fingerprint !== fingerprint) throw new Error('资料历史或当前资料已变化，请重新预览后处理');
     return { projectId: request.projectId, source: request.source, id: request.id, book: locations.book,
-      bookIdentity: locations.bookIdentity, current, history, fingerprint };
+      bookIdentity: locations.bookIdentity, current, history, fingerprint, folder, contentRoot, canonical: locations.canonical };
   }
   previewHistory(input: MaterialHistoryRequest): Promise<MaterialHistoryPreview> {
     const request = historyRequestSchema.parse(structuredClone(input)); this.project(request.projectId);
@@ -582,6 +850,93 @@ export class MaterialSyncService {
   private async assertHistoryUnchanged(context: HistoryContext) {
     const latest = await this.inspectHistory({ projectId: context.projectId, source: context.source, id: context.id, fingerprint: context.fingerprint });
     if (latest.book !== context.book || latest.bookIdentity !== context.bookIdentity) throw new Error('小说归属或目录位置已变化，历史副本暂存已保留');
+  }
+  /** Restore a user-selected history only after a separate explicit UI confirmation.
+   * The existing pending format makes an interrupted directory swap recoverable;
+   * the current directory is renamed intact to a new local-history backup. */
+  restoreHistory(input: MaterialHistoryCopyRequest): Promise<MaterialHistoryRestoreResult> {
+    const request = historyCopySchema.parse(structuredClone(input)); this.project(request.projectId);
+    return this.serial(async () => {
+      const id = request.projectId;
+      await this.noSyncPending(id);
+      const context = await this.inspectHistory(request);
+      const result = { schemaVersion: 1 as const, projectId: id, source: request.source, id: request.id };
+      if (context.current.fingerprint === context.history.fingerprint) return { ...result, backupId: null, changed: false };
+      if (!context.canonical) throw new Error('当前固定资料目录不存在，无法创建换前备份；原资料和历史均保留');
+      const base = await checkedDirectory(this.materialsRoot);
+      const current = await retentionTree(context.canonical, id), source = context.contentRoot ? await retentionTree(context.contentRoot, id) : null;
+      if (current.tree.fingerprint !== context.current.fingerprint || (source?.tree.fingerprint ?? emptyTree().fingerprint) !== context.history.fingerprint)
+        throw new Error('当前资料或历史目录已变化，请重新预览');
+      const folderIdentity = await this.dagDirectoryIdentity(context.folder);
+      const state = await this.readState(id), history = (await subDirectory(base, `同步历史/${id}`, true))!;
+      await this.requireHistorySlot(history, '本机资料历史');
+      const historyIdentity = await this.dagDirectoryIdentity(history), historyStat = await fs.lstat(history);
+      const checkHistoryRoot = async (unchanged: boolean) => {
+        if (await subDirectory(base, `同步历史/${id}`, false) !== history) throw new Error('换前备份目录位置已变化');
+        const latest = await fs.lstat(history);
+        if (!latest.isDirectory() || latest.isSymbolicLink() || latest.dev !== historyStat.dev || latest.ino !== historyStat.ino
+          || (unchanged && await this.dagDirectoryIdentity(history) !== historyIdentity)) throw new Error('换前备份目录身份或内容已变化');
+      };
+      const backupId = randomUUID(), archive = path.join(history, backupId);
+      const stage = path.join(base, `sync-stage-${id}-${randomUUID()}`);
+      if (await statOrNull(archive)) throw new Error('换前备份目录已存在，未覆盖任何资料');
+      await fs.mkdir(stage); await this.writeFiles(stage, context.history);
+      const staged = await retentionTree(stage, id);
+      if (staged.tree.fingerprint !== context.history.fingerprint) throw new Error('历史资料暂存已变化，未换入；原件与暂存均保留');
+      const checkSource = async () => {
+        if (await this.dagDirectoryIdentity(context.folder) !== folderIdentity) throw new Error('来源历史目录已变化，原件均保留');
+        if (context.contentRoot) {
+          if ((await retentionTree(context.contentRoot, id)).fingerprint !== source!.fingerprint) throw new Error('来源历史内容或目录已变化，原件均保留');
+        } else if (request.source === 'transport' && await subDirectory(context.folder, 'files', false)) throw new Error('来源历史文件目录已变化，原件均保留');
+      };
+      const checkFrozen = async () => {
+        await this.assertHistoryUnchanged(context);
+        const locations = await this.historyLocations(id);
+        if (locations.canonical !== context.canonical || locations.bookIdentity !== context.bookIdentity) throw new Error('本书或固定资料位置已变化');
+        if ((await retentionTree(context.canonical!, id)).fingerprint !== current.fingerprint) throw new Error('当前固定资料或目录已变化');
+        await checkSource();
+        if ((await retentionTree(stage, id)).fingerprint !== staged.fingerprint) throw new Error('历史资料暂存已变化');
+        if ((await this.readState(id)).raw !== state.raw) throw new Error('同步基线已变化');
+        await checkHistoryRoot(true);
+      };
+      await checkFrozen(); await this.noSyncPending(id); await this.requireHistorySlot(history, '本机资料历史');
+      const journal = this.syncPending(id), bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, projectId: id,
+        stage: path.basename(stage), archive: backupId, before: context.current.fingerprint, after: context.history.fingerprint }));
+      const handle = await fs.open(journal, 'wx');
+      try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
+      const journalStat = await fs.lstat(journal);
+      const checkJournal = async () => {
+        const stat = await fs.lstat(journal);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.dev !== journalStat.dev || stat.ino !== journalStat.ino
+          || !(await readRegular(path.dirname(journal), path.basename(journal), 16384)).equals(bytes)) throw new Error('换入记录已变化，原件和暂存均保留');
+      };
+      try {
+        await checkFrozen(); await this.requireHistorySlot(history, '本机资料历史');
+        if (await statOrNull(archive)) throw new Error('换前备份目录被占用，未覆盖任何资料');
+        await checkJournal();
+        // Last checks after the other awaited reads: no arbitrary cross-process
+        // compare-and-swap is available, so a race still leaves the journal.
+        if ((await retentionTree(context.canonical, id)).fingerprint !== current.fingerprint) throw new Error('当前资料在换入前变化');
+        await checkSource(); await checkHistoryRoot(true); await checkJournal();
+        await fs.rename(context.canonical, archive);
+        await checkHistoryRoot(false);
+        if ((await retentionTree(archive, id)).fingerprint !== current.fingerprint) throw new Error('换前备份在换入期间变化');
+        if (await statOrNull(context.canonical)) throw new Error('当前固定资料目录被占用');
+        if ((await retentionTree(stage, id)).fingerprint !== staged.fingerprint) throw new Error('换入暂存已变化');
+        await checkSource(); await checkJournal(); await fs.rename(stage, context.canonical);
+        if ((await retentionTree(context.canonical, id)).fingerprint !== staged.fingerprint
+          || (await retentionTree(archive, id)).fingerprint !== current.fingerprint
+          || await this.bookIdentity(id, context.book) !== context.bookIdentity || (await this.readState(id)).raw !== state.raw)
+          throw new Error('换入后目录、备份或同步基线已变化，原件与记录均保留');
+        await checkSource(); await checkHistoryRoot(false); await checkJournal(); await this.recoverPending(id);
+        return { ...result, backupId, changed: true };
+      } catch (error) {
+        if (!await statOrNull(context.canonical)) {
+          try { await checkJournal(); await this.recoverPending(id); } catch { /* preserve ambiguous journal and all trees */ }
+        }
+        throw new Error(`历史资料换入未完成；原件、备份和必要暂存均保留，请重新打开核对：${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
   }
   copyHistory(input: MaterialHistoryCopyRequest): Promise<MaterialHistoryCopyResult> {
     const request = historyCopySchema.parse(structuredClone(input)); this.project(request.projectId);

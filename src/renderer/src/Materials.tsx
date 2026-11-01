@@ -12,6 +12,7 @@ export function Materials({ projectId, connections, blocked, onDirty, onSaved }:
   useEffect(() => { onDirty(dirty || busy); return () => onDirty(false); }, [dirty, busy, onDirty]);
   // Unsaved conversion input survives an exit; restoring is always an explicit author action.
   const [restorable, setRestorable] = useState<UiDraft | null>(null);
+  const [draftError, setDraftError] = useState('');
   const draftLoaded = useRef(false);
   useEffect(() => {
     let live = true;
@@ -20,7 +21,7 @@ export function Materials({ projectId, connections, blocked, onDirty, onSaved }:
   }, [projectId]);
   useEffect(() => {
     if (!draftLoaded.current || !dirty) return;
-    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'materials', { doc: JSON.stringify({ kind, source, name, preview, model }) }).catch(() => {}); }, 800);
+    const timer = setTimeout(() => { void window.writer.saveUiDraft(projectId, 'materials', { doc: JSON.stringify({ kind, source, name, preview, model }) }).then(() => setDraftError('')).catch(e => setDraftError('未保存草稿自动备份失败，请保留当前页面并先保存或复制内容：' + String(e))); }, 800);
     return () => clearTimeout(timer);
   }, [dirty, projectId, kind, source, name, preview, model]);
   const restoreDraft = () => {
@@ -44,7 +45,7 @@ export function Materials({ projectId, connections, blocked, onDirty, onSaved }:
   const task = tasks.find(t => t.id === selected) ?? tasks[0]; const running = tasks.some(t => t.status === 'running');
   return <section className="ai-page"><header className="ai-heading"><div><small>MANUSCRIPT TO MATERIALS</small><h1>资料转换</h1><p>DOCX / TXT → 固定格式人物卡或世界观 → 确认保存 Markdown</p></div></header>
     <p className="material-location">本书固定资料目录：{location || '正在读取…'}</p>
-    {error && <div role="alert" className="error">{error}</div>}{message && <p role="status">{message}</p>}
+    {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}{message && <p role="status">{message}</p>}
     <div className="ai-columns"><aside className="ai-panel ai-form"><h2>导入与整理</h2>
       {restorable?.values.doc && <div className="notice" role="status">上次退出前有未保存的资料转换草稿（{new Date(restorable.updatedAt).toLocaleString()}）。<button disabled={busy} onClick={restoreDraft}>恢复上次草稿</button><button disabled={busy} onClick={discardDraft}>丢弃草稿</button></div>}
       <button disabled={busy || running} onClick={() => void run(async () => { const imported = await window.writer.importMaterialText(projectId); if (imported) { setSource(imported.text); setName(imported.name); setDirty(true); } })}>导入 DOCX / TXT 文段</button>

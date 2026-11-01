@@ -22,6 +22,8 @@ export function MacroPanel({ projectId, sampleText, blocked, onClose }: { projec
   const [text, setText] = useState((sampleText || '{{char}}说(小声)：{{user}}看见你了。').slice(0, 20000));
   const [sampleTruncated] = useState(sampleText.length > 20000);
   const [character, setCharacter] = useState('');
+  const [nicknameEnabled, setNicknameEnabled] = useState(false), [useNickname, setUseNickname] = useState(false);
+  const [userName, setUserName] = useState('作者'), [userNickname, setUserNickname] = useState(''), [characterNickname, setCharacterNickname] = useState('');
   const [result, setResult] = useState<{ expanded: string; applied: string } | null>(null);
   const [importResult, setImportResult] = useState<MacroImportResult | null>(null);
   const [phase, setPhase] = useState<Operation['kind'] | null>('read');
@@ -93,10 +95,12 @@ export function MacroPanel({ projectId, sampleText, blocked, onClose }: { projec
     finally { finish(operation); }
   };
   const preview = async () => {
-    const frozenText = text, frozenCharacter = character;
+    const frozenText = text, frozenContext = nicknameEnabled
+      ? { characterName: character, userName, nicknamePreviewEnabled: true, useNicknameForMacros: useNickname, userNickname, characterNickname }
+      : { characterName: character };
     const operation = begin('preview'); if (!operation) return;
     try {
-      const value = await window.writer.previewMacros(operation.projectId, frozenText, { characterName: frozenCharacter }, operation.requestId!);
+      const value = await window.writer.previewMacros(operation.projectId, frozenText, frozenContext, operation.requestId!);
       if (!valid(operation)) return;
       if (operation.cancelled) { setError(''); setMessage('预览已取消，未应用任何结果。'); return; }
       if (value.schemaVersion !== 1 || value.projectId !== operation.projectId || value.requestId !== operation.requestId
@@ -118,7 +122,7 @@ export function MacroPanel({ projectId, sampleText, blocked, onClose }: { projec
   return <div className="modal-overlay"><section ref={panel} tabIndex={-1} className="book-modal macro-modal" role="dialog" aria-modal="true" aria-label="宏与正则" aria-busy={busy} data-testid="macro-panel" onKeyDown={event => {
     if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); close(); }
     if (event.key === 'Tab') {
-      const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)'));
+      const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary'));
       const first = controls[0], last = controls.at(-1);
       if (!first) { event.preventDefault(); return; }
       if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { event.preventDefault(); last?.focus(); }
@@ -141,6 +145,17 @@ export function MacroPanel({ projectId, sampleText, blocked, onClose }: { projec
       </details>}
     </section>}
     <label>角色名（用于 {'{{char}}'}）<input aria-label="宏角色名" maxLength={512} disabled={busy || blocked} value={character} onChange={e => { setCharacter(e.target.value); setResult(null); }} placeholder="例如：林夏" /></label>
+    <details className="macro-nickname-preview"><summary>社区昵称宏 · 单次预览</summary>
+      <p>参考 SillyTavern Nicknames 的四个名称宏。仅使用本次输入，不安装或执行插件，不保存设置，也不改变 AI 请求。</p>
+      <label className="macro-nickname-check"><input type="checkbox" aria-label="启用昵称宏预览" checked={nicknameEnabled} disabled={busy || blocked} onChange={e => { setNicknameEnabled(e.target.checked); setResult(null); }} />启用昵称宏预览</label>
+      {nicknameEnabled && <div className="macro-nickname-inputs">
+        <label>作者原名<input aria-label="宏作者原名" maxLength={512} disabled={busy || blocked} value={userName} onChange={e => { setUserName(e.target.value); setResult(null); }} /></label>
+        <label>作者昵称<input aria-label="宏作者昵称" maxLength={512} disabled={busy || blocked} value={userNickname} onChange={e => { setUserNickname(e.target.value); setResult(null); }} placeholder="留空使用作者原名" /></label>
+        <label>角色昵称<input aria-label="宏角色昵称" maxLength={512} disabled={busy || blocked} value={characterNickname} onChange={e => { setCharacterNickname(e.target.value); setResult(null); }} placeholder="留空使用上方角色名" /></label>
+        <label className="macro-nickname-check"><input type="checkbox" aria-label="基础名称宏使用昵称" checked={useNickname} disabled={busy || blocked} onChange={e => { setUseNickname(e.target.checked); setResult(null); }} />基础 {'{{user}}'} / {'{{char}}'} 也使用昵称</label>
+        <small>可预览 {'{{userFull}}'}、{'{{charFull}}'}、{'{{userNickname}}'}、{'{{charNickname}}'}。未启用时这些宏保留原文。</small>
+      </div>}
+    </details>
     <label>测试文本<textarea aria-label="宏测试文本" rows={4} maxLength={20000} disabled={busy || blocked} value={text} onChange={e => { setText(e.target.value); setResult(null); }} /></label>
     {sampleTruncated && <p className="macro-help" data-testid="macro-sample-truncated">已取前20000字符用于预览，正文未变。</p>}
     <p className="macro-help">正则计算最长3秒，可随时取消；超时、取消或来源变化时不返回部分结果。测试文本最多20,000字符，结果最多200,000字符。</p>

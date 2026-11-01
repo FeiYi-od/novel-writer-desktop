@@ -35,11 +35,21 @@ export type MaterialHistorySource = 'local' | 'transport';
 export interface MaterialHistoryVersion {
   id: string;
   source: MaterialHistorySource;
+  /** 本机活动区或保留区；旧客户端不认识保留区。 */
+  location?: 'active' | 'retained';
   createdAt: string;
   /** Local archives have no manifest; counts are verified when opened. */
   files: number | null;
   bytes: number | null;
 }
+export interface MaterialHistoryRetainRequest { projectId: string; id: string; fingerprint: string }
+export interface MaterialHistoryRetainResult { schemaVersion: 1; projectId: string; id: string; location: 'retained'; files: number; bytes: number }
+/** 回收保留区历史：只在作者两次确认后，删除保留区的那一份本机历史以释放磁盘。
+ * 活动区、书内传输版本和完整ZIP归档都不受影响；被其他版本当作父版本的条目会被拒绝。 */
+export interface MaterialHistoryReclaimRequest { projectId: string; id: string; fingerprint: string; confirm: '回收' }
+/** 回收书内传输历史的一个叶子版本：只在作者确认后删除该版本目录以释放磁盘与名额。
+ * 仍被其他版本当作父版本时拒绝，避免破坏父链与完整历史归档。 */
+export interface MaterialHistoryTransportReclaimRequest { projectId: string; id: string; fingerprint: string; confirm: '回收' }export interface MaterialHistoryReclaimResult { schemaVersion: 1; projectId: string; id: string; files: number; bytes: number; reclaimedAt: string }
 export interface MaterialHistorySnapshot {
   schemaVersion: 1;
   projectId: string;
@@ -142,6 +152,15 @@ export interface MaterialHistoryCopyResult {
   directory: string;
   files: number;
   bytes: number;
+}
+/** Explicitly confirmed restore swaps only this project's local fixed materials. */
+export interface MaterialHistoryRestoreResult {
+  schemaVersion: 1;
+  projectId: string;
+  source: MaterialHistorySource;
+  id: string;
+  backupId: string | null;
+  changed: boolean;
 }
 export interface MaterialHistoryArchiveResult extends MaterialHistoryCopyResult {
   file: string;

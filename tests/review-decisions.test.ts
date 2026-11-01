@@ -15,13 +15,14 @@ import { ReviewDecisionStore, reviewReportFingerprint } from '../src/main/review
 import { reviewReportIdentityText } from '../src/core/review-identity';
 import { textDocument } from '../src/main/text-import';
 import type { AIRequest, AITask, ReviewDecisionSnapshot, ReviewDecisionRequest, RichNode } from '../src/shared/contracts';
+import { WAIT_LIMIT } from './wait';
 
 const report = JSON.stringify({ summary: '虚构审稿', issues: [
   { category: '错别字', quote: '推开们', replacement: '推开门', reason: '门字误写', evidence: '' },
   { category: '语病', quote: '雨停了', replacement: '雨又下了', reason: '自选修改', evidence: '' },
   { category: '世界观', quote: '不存在的句子', replacement: '另句', reason: '无位置建议', evidence: '' }
 ] });
-const until = async (predicate: () => Promise<boolean>) => { const end = Date.now() + 10000; while (!await predicate()) { if (Date.now() > end) throw new Error('等待审稿状态测试超时'); await new Promise(resolve => setTimeout(resolve, 10)); } };
+const until = async (predicate: () => Promise<boolean>) => { const end = Date.now() + WAIT_LIMIT; while (!await predicate()) { if (Date.now() > end) throw new Error('等待审稿状态测试超时'); await new Promise(resolve => setTimeout(resolve, 10)); } };
 async function fixture(t: TestContext) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-decisions-')), local = path.join(root, 'local'), materials = path.join(root, 'materials');
   const workspace = new Workspace(local, materials); await workspace.initialize();

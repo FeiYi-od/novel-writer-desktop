@@ -7,8 +7,8 @@ import { EMPTY_DOCUMENT, type Chapter, type Manuscript, type NotesSnapshot, type
 import { encodeDocx, validateDocument } from './docx';
 import { ChapterPaths } from './chapter-paths';
 import type { RenameChapterRequest } from '../shared/contracts';
-import { copyableText, normalizeParagraphs } from '../core/typography';
-import { decodeText, textDocument } from './text-import';
+import { normalizeParagraphs } from '../core/typography';
+import { decodeText, txtDocument, txtText } from './text-import';
 import { describeSaveFailure } from '../core/save-failure';
 import { materialDirectory, notesMarkdown, parseNotesMarkdown, readMarkdown, writeMarkdown } from './markdown-materials';
 import { importRecoveredMaterials } from './material-recovery';
@@ -22,6 +22,7 @@ const inside = (root: string, file: string) => {
   const rel = path.relative(root, file);
   return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
 };
+type RecoveryDirectory = { root: string; base: string; directory: string; rootDev: number; rootIno: number; dev: number; ino: number };
 
 export class Workspace {
   private projects = new Map<string, Project>();
@@ -73,6 +74,31 @@ export class Workspace {
     await fs.mkdir(directory, { recursive: true });
     if (!inside(project.root, await fs.realpath(directory))) throw new Error('资料目录不能指向小说目录外');
     return directory;
+  }
+
+  private async verifyRecoveryDirectory(target: RecoveryDirectory) {
+    const root = await fs.lstat(target.root), directory = await fs.lstat(target.directory);
+    if (!root.isDirectory() || root.isSymbolicLink() || root.dev !== target.rootDev || root.ino !== target.rootIno
+      || !directory.isDirectory() || directory.isSymbolicLink() || directory.dev !== target.dev || directory.ino !== target.ino
+      || await fs.realpath(target.root) !== target.base || path.relative(target.directory, await fs.realpath(target.directory)) !== '')
+      throw new Error('本机恢复目录已变化，未将稿件写入其他目录');
+  }
+
+  private async writeRecovery(target: RecoveryDirectory, name: string, data: string | Buffer) {
+    await this.verifyRecoveryDirectory(target);
+    const file = path.join(target.directory, name), handle = await fs.open(file, 'wx');
+    try {
+      const opened = await handle.stat();
+      await this.verifyRecoveryDirectory(target);
+      const current = await fs.lstat(file);
+      if (!opened.isFile() || !current.isFile() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino)
+        throw new Error('本机恢复文件身份已变化，未写入稿件');
+      await handle.writeFile(data);
+      await this.verifyRecoveryDirectory(target);
+      const after = await fs.lstat(file);
+      if (!after.isFile() || after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino)
+        throw new Error('本机恢复文件写入期间发生变化');
+    } finally { await handle.close(); }
   }
 
   async attach(folder: string): Promise<Project> {
@@ -163,7 +189,9 @@ export class Workspace {
     const hash = digest(buffer);
     if (path.extname(file).toLowerCase() === '.txt') {
       const decoded = decodeText(buffer);
-      return { projectId, path: relative, hash, content: textDocument(decoded.text), managed: decoded.encoding === 'utf-8', warnings: [decoded.encoding === 'utf-8' ? 'TXT 仅保存纯文本；字体与粗斜体不写入文件，保存时规范段首空格。' : `此 TXT 编码为 ${decoded.encoding}，请另存 UTF-8 TXT 或 DOCX，原文件保留。`] };
+      const cached = decoded.encoding === 'utf-8' ? await this.readState(projectId, hash) : undefined;
+      const content = cached && txtText(cached) === decoded.text ? cached : txtDocument(decoded.text);
+      return { projectId, path: relative, hash, content, managed: decoded.encoding === 'utf-8', warnings: [decoded.encoding === 'utf-8' ? 'TXT 仅保存纯文本；字体与粗斜体不写入文件，保存时规范段首空格。' : `此 TXT 编码为 ${decoded.encoding}，请另存 UTF-8 TXT 或 DOCX，原文件保留。`] };
     }
     const state = await this.readState(projectId, hash);
     if (state) return { projectId, path: relative, hash, content: state, managed: true, warnings: [] };
@@ -220,10 +248,15 @@ export class Workspace {
   private async recoveryDirectory(projectId: string) {
     this.project(z.uuid().parse(projectId));
     const root = path.join(this.localData, 'recovery'); await fs.mkdir(root, { recursive: true });
-    const base = await fs.realpath(root), directory = path.join(base, projectId); await fs.mkdir(directory, { recursive: true });
+    const rootStat = await fs.lstat(root), local = await fs.realpath(this.localData), base = await fs.realpath(root);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || !inside(local, base)) throw new Error('本机恢复根目录或链接异常，未保存到其他小说');
+    const directory = path.join(base, projectId); await fs.mkdir(directory, { recursive: true });
     const stat = await fs.lstat(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(base, await fs.realpath(directory))) throw new Error('本机恢复目录或链接异常，未保存到其他小说');
-    return directory;
+    const latestRoot = await fs.lstat(root);
+    if (!latestRoot.isDirectory() || latestRoot.isSymbolicLink() || latestRoot.dev !== rootStat.dev || latestRoot.ino !== rootStat.ino || await fs.realpath(root) !== base)
+      throw new Error('本机恢复根目录已变化，未保存到其他小说');
+    return { root, base, directory, rootDev: rootStat.dev, rootIno: rootStat.ino, dev: stat.dev, ino: stat.ino } satisfies RecoveryDirectory;
   }
 
   /** Exact original bytes for format-preserving operations, never renderer text. */
@@ -239,9 +272,9 @@ export class Workspace {
     return { projectId, path: resolved.split(path.sep).join('/'), hash, bytes };
   }
 
-  publishOriginalCopy(projectId: string, relative: string, expectedHash: string, input: Uint8Array, label: '保真编辑' | '结构编辑' | '换图') {
+  publishOriginalCopy(projectId: string, relative: string, expectedHash: string, input: Uint8Array, label: '保真编辑' | '结构编辑' | '换图' | '排版副本') {
     this.checkedRequestPath(projectId, relative); z.string().regex(/^[a-f0-9]{64}$/u).parse(expectedHash);
-    z.enum(['保真编辑', '结构编辑', '换图']).parse(label);
+    z.enum(['保真编辑', '结构编辑', '换图', '排版副本']).parse(label);
     const bytes = Buffer.from(input);
     if (bytes.length > 20 * 1024 * 1024) throw new Error('副本超过20 MiB，原稿已保留');
     return this.serial(async () => {
@@ -267,8 +300,8 @@ export class Workspace {
     return this.serial(async () => {
       const current = await this.readOriginalChapter(projectId, relative, expectedHash), file = await this.chapterFile(projectId, current.path);
       const recovery = await this.recoveryDirectory(projectId), stamp = `${Date.now()}-${randomUUID()}`, extension = path.extname(file).toLowerCase();
-      await fs.writeFile(path.join(recovery, `${stamp}-previous${extension}`), current.bytes, { flag: 'wx' });
-      await fs.writeFile(path.join(recovery, `${stamp}-previous.meta.json`), JSON.stringify({ schemaVersion: 1, sourcePath: current.path, at: new Date().toISOString(), bytes: current.bytes.length }), { flag: 'wx' });
+      await this.writeRecovery(recovery, `${stamp}-previous${extension}`, current.bytes);
+      await this.writeRecovery(recovery, `${stamp}-previous.meta.json`, JSON.stringify({ schemaVersion: 1, sourcePath: current.path, at: new Date().toISOString(), bytes: current.bytes.length }));
       await this.atomic(file, bytes, async () => {
         const latest = await this.readOriginalChapter(projectId, current.path, expectedHash);
         if (latest.path !== current.path || await this.chapterFile(projectId, current.path) !== file) throw new Error('恢复期间章节路径或版本已变化，原件已保留');
@@ -282,8 +315,8 @@ export class Workspace {
       const project = this.project(projectId);
       if (!['docx', 'txt'].includes(format)) throw new Error('正文仅支持 DOCX 或 TXT');
       validateDocument(source);
-      const content = format === 'txt' ? textDocument(copyableText(source)) : normalizeParagraphs(source);
-      const data = format === 'txt' ? Buffer.from(copyableText(content), 'utf8') : await encodeDocx(content);
+      const content = normalizeParagraphs(source);
+      const data = format === 'txt' ? Buffer.from(txtText(content), 'utf8') : await encodeDocx(content);
       const relative = `新章节-${Date.now()}-${randomUUID().slice(0, 4)}.${format}`;
       await this.recordState(projectId, digest(data), content);
       // Internal callers may recheck a source snapshot after encoding and cache
@@ -311,41 +344,61 @@ export class Workspace {
       const { projectId, path: relative, expectedHash } = request;
       // 断网也可能发生在解析路径阶段，所以先把草稿落本机，再碰网络文件。
       const isTxt = path.extname(relative).toLowerCase() === '.txt';
-      const content = isTxt ? textDocument(copyableText(request.content)) : normalizeParagraphs(request.content);
-      const data = isTxt ? Buffer.from(copyableText(content), 'utf8') : await encodeDocx(content);
+      const content = normalizeParagraphs(request.content);
+      const data = isTxt ? Buffer.from(txtText(content), 'utf8') : await encodeDocx(content);
       const recovery = await this.recoveryDirectory(projectId);
       const stamp = `${Date.now()}-${randomUUID()}`;
-      await fs.writeFile(path.join(recovery, `${stamp}-draft.${isTxt ? 'txt' : 'docx'}`), data, { flag: 'wx' });
+      await this.writeRecovery(recovery, `${stamp}-draft.${isTxt ? 'txt' : 'docx'}`, data);
       // 附带来源信息，界面里才能告诉作者这份草稿原本属于哪一章。
-      await fs.writeFile(path.join(recovery, `${stamp}-draft.meta.json`), JSON.stringify({ sourcePath: relative, at: new Date().toISOString(), bytes: data.length }), { flag: 'wx' });
+      await this.writeRecovery(recovery, `${stamp}-draft.meta.json`, JSON.stringify({ sourcePath: relative, at: new Date().toISOString(), bytes: data.length }));
       if (await this.resolveChapterPath(projectId, relative) !== path.normalize(relative)) throw new Error('章节已经重命名，旧路径不能写入，请重新打开当前章节');
       const file = await this.chapterFile(projectId, relative);
+      const initialStat = await fs.stat(file);
+      if (!initialStat.isFile() || initialStat.size > 20 * 1024 * 1024) throw new Error('章节文件类型异常或超过20 MiB，草稿已保留');
+      // Recheck the original after the temporary output is fully written. A
+      // hash check before staging leaves a window where another application
+      // can edit the manuscript and be overwritten by the final rename.
+      const beforeCommit = async () => {
+        if (await this.resolveChapterPath(projectId, relative) !== path.normalize(relative)
+          || await this.chapterFile(projectId, relative) !== file) throw new Error('章节路径已变化，草稿已保留，请重新打开');
+        const before = await fs.stat(file);
+        if (!before.isFile() || before.dev !== initialStat.dev || before.ino !== initialStat.ino || before.size > 20 * 1024 * 1024)
+          throw new Error('章节原文件身份已变化，草稿已保留，请重新打开');
+        const latest = await fs.readFile(file), after = await fs.stat(file);
+        if (digest(latest) !== expectedHash || latest.length !== before.size || before.dev !== after.dev || before.ino !== after.ino
+          || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
+          throw new Error('保存期间文件发生变化，外部原稿和本机草稿均已保留');
+        if (await this.chapterFile(projectId, relative) !== file) throw new Error('章节路径已变化，草稿已保留，请重新打开');
+        const final = await fs.stat(file);
+        if (after.dev !== final.dev || after.ino !== final.ino || after.size !== final.size || after.mtimeMs !== final.mtimeMs || after.ctimeMs !== final.ctimeMs)
+          throw new Error('保存期间文件发生变化，外部原稿和本机草稿均已保留');
+      };
       if (isTxt) {
         validateDocument(request.content);
         const previous = await fs.readFile(file);
         if (digest(previous) !== expectedHash) throw new Error('文件已被其他程序修改，TXT 草稿已保存在本机恢复区');
         if (decodeText(previous).encoding !== 'utf-8') throw new Error('非 UTF-8 TXT 请另存副本，原文件保留');
         const previousStamp = `${Date.now()}-${randomUUID()}`;
-        await fs.writeFile(path.join(recovery, `${previousStamp}-previous.txt`), previous, { flag: 'wx' });
-        await fs.writeFile(path.join(recovery, `${previousStamp}-previous.meta.json`), JSON.stringify({ sourcePath: relative, at: new Date().toISOString(), bytes: previous.length }), { flag: 'wx' });
+        await this.writeRecovery(recovery, `${previousStamp}-previous.txt`, previous);
+        await this.writeRecovery(recovery, `${previousStamp}-previous.meta.json`, JSON.stringify({ sourcePath: relative, at: new Date().toISOString(), bytes: previous.length }));
         if (digest(await fs.readFile(file)) !== expectedHash) throw new Error('TXT 文件保存期间发生变化');
-        await this.atomic(file, data);
+        await this.recordState(projectId, digest(data), content);
+        await this.atomic(file, data, beforeCommit);
         return { projectId, path: relative, hash: digest(data), content, managed: true, warnings: ['TXT 仅保存纯文本，排版样式不会写入文件。'] };
       }
       const previous = await fs.readFile(file);
       if (digest(previous) !== expectedHash) throw new Error('文件已被其他程序修改。当前草稿已保存在本机恢复区，请另存副本或重新打开');
       if (!await this.readState(projectId, expectedHash)) throw new Error('外部 DOCX 请另存副本，避免覆盖尚未支持的排版');
       const previousStamp = `${Date.now()}-${randomUUID()}`;
-      await fs.writeFile(path.join(recovery, `${previousStamp}-previous.docx`), previous, { flag: 'wx' });
-      await fs.writeFile(path.join(recovery, `${previousStamp}-previous.meta.json`), JSON.stringify({ sourcePath: relative, at: new Date().toISOString(), bytes: previous.length }), { flag: 'wx' });
+      await this.writeRecovery(recovery, `${previousStamp}-previous.docx`, previous);
+      await this.writeRecovery(recovery, `${previousStamp}-previous.meta.json`, JSON.stringify({ sourcePath: relative, at: new Date().toISOString(), bytes: previous.length }));
       await this.recordState(projectId, digest(data), content);
       // 最终写入前再检查；文件同步系统仍可能发生竞争，NAS 阶段需保留冲突双方。
       let latest: Buffer;
       try { latest = await fs.readFile(file); }
       catch (error) { throw new Error(describeSaveFailure(error).message); }
       if (digest(latest) !== expectedHash) throw new Error('保存期间文件发生变化，草稿已保留');
-      try { await this.atomic(file, data); }
-      catch (error) { throw new Error(describeSaveFailure(error).message); }
+      await this.atomic(file, data, beforeCommit);
       return { projectId, path: relative, hash: digest(data), content, managed: true, warnings: [] };
     });
   }

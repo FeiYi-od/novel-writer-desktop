@@ -2,6 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyRegexScripts, rollDice, substituteMacros } from '../src/core/st-macros';
 
+test('宏：重复 pick 按各自位置稳定计算', () => {
+  const macro = `{{pick::${Array.from({ length: 100 }, (_, index) => index).join('::')}}}`;
+  const input = `${macro} ${macro}`;
+  const first = substituteMacros(input, { seed: 'test' });
+  assert.equal(first, substituteMacros(input, { seed: 'test' }));
+  const [left, right] = first.split(' ');
+  assert.notEqual(left, right, '不同位置不能始终使用第一个宏的位置');
+});
+
+test('宏：未知原型名保持原文', () => {
+  assert.equal(substituteMacros('{{constructor}}|{{__proto__}}|{{char}}', { char: '虚构角色' }), '{{constructor}}|{{__proto__}}|虚构角色');
+  assert.equal(substituteMacros('{{userFull}}|{{charFull}}|{{userNickname}}|{{charNickname}}', { char: '虚构角色', user: '作者' }), '{{userFull}}|{{charFull}}|{{userNickname}}|{{charNickname}}', '未运行昵称扩展时保留其专有宏');
+});
+
+test('社区昵称宏：显式启用才展开，完整名与昵称覆盖选项彼此独立', () => {
+  const text = '{{userFull}}|{{charFull}}|{{userNickname}}|{{charNickname}}|{{user}}|{{char}}';
+  const names = { user: '作者甲', char: '林岚', userNickname: '  阿甲  ', charNickname: '  小岚  ' };
+  assert.equal(substituteMacros(text, names as any), '{{userFull}}|{{charFull}}|{{userNickname}}|{{charNickname}}|作者甲|林岚');
+  assert.equal(substituteMacros(text, { ...names, nicknamePreviewEnabled: true } as any), '作者甲|林岚|阿甲|小岚|作者甲|林岚');
+  assert.equal(substituteMacros(text, { ...names, nicknamePreviewEnabled: true, useNicknameForMacros: true } as any), '作者甲|林岚|阿甲|小岚|阿甲|小岚');
+  assert.equal(substituteMacros(text, { user: '作者甲', char: '林岚', userNickname: ' ', charNickname: '', nicknamePreviewEnabled: true, useNicknameForMacros: true } as any), '作者甲|林岚|作者甲|林岚|作者甲|林岚');
+  assert.equal(substituteMacros('{{userNickname}}|{{charNickname}}', { nicknamePreviewEnabled: true } as any), '|');
+});
+
+test('社区昵称宏：正则替换模板复用同一组显式预览设置', () => {
+  const env = { user: '作者甲', char: '林岚', userNickname: '阿甲', charNickname: '小岚', nicknamePreviewEnabled: true, useNicknameForMacros: true };
+  assert.equal(applyRegexScripts('甲', [{ findRegex: '/甲/g', replaceString: '{{charFull}}/{{charNickname}}/{{char}}/{{userFull}}/{{userNickname}}/{{user}}' }], env as any), '林岚/小岚/小岚/作者甲/阿甲/阿甲');
+});
+
 test('宏：常用占位符替换，未知宏原样保留', () => {
   const env = { user: '作者', char: '林夏', description: '雨夜的旅人', scenario: '北门客栈', lastMessage: '你来了。' };
   assert.equal(substituteMacros('{{char}}对{{user}}说：{{lastMessage}}', env), '林夏对作者说：你来了。');

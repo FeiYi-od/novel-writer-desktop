@@ -44,8 +44,71 @@ test('世界书存储：同名拒绝、损坏文件被跳过、可删除', async
   const books = await f.store.list(f.project.id);
   assert.equal(books.length, 2);
   assert.equal(books.find(book => book.name === '损坏')?.error, '文件损坏，已跳过');
-  await f.store.remove(f.project.id, '甲书');
+  const target = books.find(book => book.name === '甲书'); assert.ok(target?.hash);
+  await f.store.remove(f.project.id, '甲书', target.hash);
   assert.deepEqual((await f.store.list(f.project.id)).map(book => book.name), ['损坏']);
+});
+
+test('世界书删除前核对列表版本并保留原始备份', async t => {
+  const f = await fixture(t);
+  await f.store.import(f.project.id, '甲书', world({ '0': { key: ['星港'], content: '初版设定' } }));
+  const selected = (await f.store.list(f.project.id))[0]; assert.ok(selected.hash);
+  const source = path.join(f.root, '甲', '小说资料', '世界书', '甲书.json');
+  const changed = JSON.stringify(world({ '0': { key: ['星港'], content: '外部更新' } }));
+  await fs.writeFile(source, changed);
+  await assert.rejects(f.store.remove(f.project.id, '甲书', selected.hash), /变化|版本/u);
+  assert.equal(await fs.readFile(source, 'utf8'), changed);
+  const latest = (await f.store.list(f.project.id))[0]; assert.ok(latest.hash);
+  await f.store.remove(f.project.id, '甲书', latest.hash);
+  await assert.rejects(fs.stat(source), { code: 'ENOENT' });
+  const backups = path.join(f.root, '甲', '小说资料', '世界书删除备份');
+  const saved = await fs.readdir(backups); assert.equal(saved.length, 1);
+  assert.equal(await fs.readFile(path.join(backups, saved[0]), 'utf8'), changed);
+});
+
+test('世界书删除备份目录为链接时拒绝删除并保留原文件', async t => {
+  const f = await fixture(t);
+  await f.store.import(f.project.id, '甲书', world({ '0': { key: ['星港'], content: '保留原件' } }));
+  const selected = (await f.store.list(f.project.id))[0]; assert.ok(selected.hash);
+  const outside = path.join(f.root, '其他目录'); await fs.mkdir(outside);
+  const link = path.join(f.root, '甲', '小说资料', '世界书删除备份');
+  await fs.symlink(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(f.store.remove(f.project.id, '甲书', selected.hash), /链接|目录|越界/u);
+  assert.equal((await f.store.list(f.project.id))[0].name, '甲书');
+  assert.deepEqual(await fs.readdir(outside), []);
+  await fs.unlink(link);
+});
+
+test('世界书拒绝目录链接与小说归属变更，不能读取或写入另一部小说', async t => {
+  const f = await fixture(t);
+  const otherFolder = path.join(f.root, '乙'); await fs.mkdir(otherFolder);
+  const other = await f.workspace.attach(otherFolder);
+  await f.store.import(other.id, '乙书', world({ '0': { key: ['星港'], content: '乙书私有内容' } }));
+  const target = path.join(otherFolder, '小说资料', '世界书');
+  const link = path.join(f.root, '甲', '小说资料', '世界书');
+  await fs.symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(f.store.list(f.project.id), /链接|目录|越界/u);
+  await assert.rejects(f.store.import(f.project.id, '跨书', world({ '0': { key: ['星港'], content: '跨书' } })), /链接|目录|越界/u);
+  assert.deepEqual((await f.store.list(other.id)).map(item => item.name), ['乙书']);
+  await fs.unlink(link);
+  const record = path.join(f.root, '甲', '小说资料', 'project.json');
+  await fs.writeFile(record, JSON.stringify({ schemaVersion: 1, id: other.id, name: '虚构更改' }));
+  await assert.rejects(f.store.list(f.project.id), /归属|小说/u);
+  assert.deepEqual((await f.store.list(other.id)).map(item => item.name), ['乙书']);
+});
+
+test('世界书文件链接不得读取或移除目标', async t => {
+  const f = await fixture(t);
+  await f.store.list(f.project.id);
+  const outside = path.join(f.root, '不可覆盖.json');
+  const bytes = JSON.stringify(world({ '0': { key: ['星港'], content: '外部虚构资料' } }));
+  await fs.writeFile(outside, bytes);
+  const link = path.join(f.root, '甲', '小说资料', '世界书', '链接.json');
+  try { await fs.symlink(outside, link, 'file'); }
+  catch (error) { if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) { t.skip('系统不允许创建文件符号链接'); return; } throw error; }
+  await assert.rejects(f.store.read(f.project.id, '链接'), /链接|文件|越界/u);
+  await assert.rejects(f.store.remove(f.project.id, '链接', '0'.repeat(64)), /链接|文件|越界/u);
+  assert.equal(await fs.readFile(outside, 'utf8'), bytes);
 });
 
 test('世界书上下文：只注入命中条目，超长按上限截断', async t => {
@@ -65,6 +128,22 @@ test('世界书上下文：只注入命中条目，超长按上限截断', async
   assert.equal(long.entries, 1);
   const limited = await f.store.context(f.project.id, '北门', undefined, { books: ['长书'], maxCharacters: 500 });
   assert.ok(limited.text.length <= 560, `应受上限约束，实际 ${limited.text.length}`);
+});
+
+test('未知酒馆标签映射时 AI 不注入标签受限条目，预览可手动指定标签 ID', async t => {
+  const f = await fixture(t);
+  await f.store.import(f.project.id, '标签测试', world({
+    '0': { key: ['星港'], content: '普通设定', order: 10 },
+    '1': { key: ['星港'], content: '标签限定设定', order: 9, characterFilter: { isExclude: false, names: [], tags: ['tag-alpha'] } },
+    '2': { key: ['星港'], content: '排除标签设定', order: 8, characterFilter: { isExclude: true, names: [], tags: ['tag-beta'] } }
+  }));
+  const ai = await f.store.context(f.project.id, '星港', ['林夏']);
+  assert.match(ai.text, /普通设定/u);
+  assert.doesNotMatch(ai.text, /标签限定设定|排除标签设定/u);
+  const hits = await f.store.preview(f.project.id, ['标签测试'], '星港', ['林夏'], ['tag-alpha']);
+  assert.deepEqual(hits.map(hit => hit.content), ['普通设定', '标签限定设定', '排除标签设定']);
+  const empty = await f.store.preview(f.project.id, ['标签测试'], '星港', ['林夏'], []);
+  assert.deepEqual(empty.map(hit => hit.content), ['普通设定', '排除标签设定']);
 });
 test('角色卡内嵌世界书：与独立世界书一样参与触发', async t => {
   const f = await fixture(t);

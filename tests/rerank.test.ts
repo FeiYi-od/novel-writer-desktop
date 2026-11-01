@@ -11,6 +11,7 @@ import { RerankService } from '../src/main/rerank-service';
 import { AuxiliaryModels } from '../src/main/auxiliary-models';
 import type { AuxiliaryModelConnection } from '../src/shared/contracts';
 import type { RerankProvider } from '../src/core/knowledge';
+import { WAIT_LIMIT } from './wait';
 
 const codec = { encrypt: (s: string) => Buffer.from('encoded:' + s), decrypt: (b: Buffer) => b.toString().slice(8) };
 type Request = Parameters<RerankProvider['rerank']>[0];
@@ -35,7 +36,7 @@ async function fixture(t: TestContext) {
   t.after(async () => { assert.match(path.relative(os.tmpdir(), dir), /^novel-rerank-test-[^\\/]+$/); await fs.rm(dir, { recursive: true, force: true }); });
   return dir;
 }
-const waitFor = async (predicate: () => boolean) => { const end = Date.now() + 3000; while (!predicate()) { if (Date.now() > end) throw new Error('mock request timed out'); await new Promise(r => setTimeout(r, 10)); } };
+const waitFor = async (predicate: () => boolean) => { const end = Date.now() + WAIT_LIMIT; while (!predicate()) { if (Date.now() > end) throw new Error('mock request timed out'); await new Promise(r => setTimeout(r, 10)); } };
 
 test('五类重排序HTTP契约、来源映射、原始负logit、稳定排序及配置/请求快照', async t => {
   const calls: { url: string; body: any; auth: string | undefined }[] = [];

@@ -34,6 +34,15 @@ test('隔离正则：请求、脚本与宏上下文在调用时冻结', async ()
   assert.equal(result.projectId, frozenId); assert.equal(result.requestId, frozenRequest); assert.equal(result.applied, '林岚一');
 });
 
+test('隔离正则：昵称输入冻结且开关必须是布尔值', async () => {
+  const runner = new RegexPreviewRunner(await regexWorkerFactory());
+  const input = task({ text: '{{charFull}}/{{charNickname}}/{{char}}', env: { char: '林岚', charNickname: '小岚', nicknamePreviewEnabled: true, useNicknameForMacros: true } });
+  const pending = runner.run(input); input.env.charNickname = '错书昵称'; input.env.nicknamePreviewEnabled = false;
+  const result = await pending; assert.equal(result.applied, '林岚/小岚/小岚');
+  assert.throws(() => freezeRegexPreviewTask(task({ env: { nicknamePreviewEnabled: 'yes' as never } })), /开关/u);
+  assert.throws(() => freezeRegexPreviewTask(task({ env: { charNickname: 'x'.repeat(20001) } })), /上限/u);
+});
+
 test('隔离正则：恶意回溯超时终止，主线程持续响应且容量释放', async () => {
   const runner = new RegexPreviewRunner(await regexWorkerFactory(), { timeoutMs: 400, maxConcurrent: 1 });
   let ticks = 0; const timer = setInterval(() => ticks++, 5);

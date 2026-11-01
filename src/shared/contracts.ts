@@ -1,5 +1,6 @@
-import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryCapacitySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult, MaterialHistoryImportRequest, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportResult } from './material-sync';
+import type { MaterialSyncRequest, MaterialSyncSnapshot, MaterialHistorySnapshot, MaterialHistoryCapacitySnapshot, MaterialHistoryRequest, MaterialHistoryPreview, MaterialHistoryCopyRequest, MaterialHistoryCopyResult, MaterialHistoryArchiveResult, MaterialHistoryImportRequest, MaterialHistoryImportCopyRequest, MaterialHistoryImportPreview, MaterialHistoryImportResult, MaterialHistoryRetainRequest, MaterialHistoryRetainResult, MaterialHistoryReclaimRequest, MaterialHistoryReclaimResult, MaterialHistoryTransportReclaimRequest, MaterialHistoryRestoreResult } from './material-sync';
 import type { DocxStructureSnapshot, DocxStructureAction, DocxStructureEditResult } from './docx-structure';
+import type { DocxBodyAction, DocxBodySnapshot, DocxBodyEditResult } from './docx-body';
 import type { MacroContext, MacroPreviewResult, MacroImportResult } from './macros';
 import type { MaterialHistoryDagPreview, MaterialHistoryDagRequest, MaterialHistoryDagArchiveResult, MaterialHistoryDagImportRequest, MaterialHistoryDagImportPreview, MaterialHistoryDagImportResult } from './material-sync';
 
@@ -61,7 +62,14 @@ export interface AIModelList { connectionId?: string; baseUrl: string; checkedAt
 
 export interface DiscussionMessageView { id: string; role: 'user' | 'assistant' | 'system'; content: string; at: string; compressedInto?: string }
 
+export interface CharacterTagMapping { characterId: string; avatarKey: string; tagIds: string[] | null }
+export interface CharacterTagMappingSnapshot { projectId: string; mappings: CharacterTagMapping[]; hash: string; characterHash: string; currentCharacterHash: string; stale: boolean }
+export type SillyPluginInspection = import('../main/silly-plugin-inspect').SillyPluginInspection;
+
 export interface WriterApi {
+  inspectSillyPlugin(projectId: string): Promise<SillyPluginInspection | null>;
+  readCharacterTagMappings(projectId: string): Promise<CharacterTagMappingSnapshot>;
+  saveCharacterTagMappings(projectId: string, mappings: CharacterTagMapping[], expectedHash: string, expectedCharacterHash: string): Promise<CharacterTagMappingSnapshot>;
   updateVersion(): Promise<string>;
   checkUpdate(token?: string): Promise<{ currentVersion: string; latestVersion: string; updateAvailable: boolean; releaseUrl: string }>;
   openUpdatePage(): Promise<void>;
@@ -70,6 +78,12 @@ export interface WriterApi {
   synchronizeMaterials(request: MaterialSyncRequest): Promise<MaterialSyncSnapshot>;
   materialHistory(projectId: string): Promise<MaterialHistorySnapshot>;
   materialHistoryCapacity(projectId: string): Promise<MaterialHistoryCapacitySnapshot>;
+  retainMaterialHistory(request: MaterialHistoryRetainRequest): Promise<MaterialHistoryRetainResult>;
+  /** 回收保留区历史，释放磁盘；活动区与书内传输历史不受影响。 */
+  reclaimMaterialHistory(request: MaterialHistoryReclaimRequest): Promise<MaterialHistoryReclaimResult>;
+  /** 回收书内传输历史的一个叶子版本，释放磁盘与名额；仍有子版本时拒绝。 */
+  reclaimMaterialHistoryTransport(request: MaterialHistoryTransportReclaimRequest): Promise<MaterialHistoryReclaimResult>;
+  restoreMaterialHistory(request: MaterialHistoryCopyRequest): Promise<MaterialHistoryRestoreResult>;
   previewMaterialHistoryDag(projectId: string): Promise<MaterialHistoryDagPreview>;
   archiveMaterialHistoryDag(request: MaterialHistoryDagRequest): Promise<MaterialHistoryDagArchiveResult>;
   openMaterialHistoryDagArchive(projectId: string): Promise<MaterialHistoryDagImportPreview | null>;
@@ -206,10 +220,11 @@ export interface WriterApi {
   previewMacros(projectId: string, text: string, context: MacroContext, requestId?: string): Promise<MacroPreviewResult>;
   cancelMacroPreview(projectId: string, requestId: string): Promise<boolean>;
   importMacroScripts(projectId: string): Promise<MacroImportResult | null>;
-  listWorldBooks(projectId: string): Promise<{ name: string; entries: number; keys: number; error?: string }[]>;
+  listWorldBooks(projectId: string): Promise<{ name: string; entries: number; keys: number; hash?: string; error?: string }[]>;
   importWorldBook(projectId: string): Promise<{ name: string; entries: number } | null>;
-  removeWorldBook(projectId: string, name: string): Promise<boolean>;
+  removeWorldBook(projectId: string, name: string, expectedHash: string): Promise<boolean>;
   previewWorldInfo(projectId: string, names: string[], text: string, characterNames?: string[]): Promise<{ id: string; book: string; keys: string[]; secondaryKeys: string[]; content: string; comment: string; selective: boolean; selectiveLogic: 'AND_ANY' | 'NOT_ALL' | 'NOT_ANY' | 'AND_ALL'; constant: boolean; disabled: boolean; order: number; position: 'before_char' | 'after_char' | 'at_depth'; depth: number | null; probability: number; caseSensitive: boolean }[]>;
+  previewWorldInfoEnabled(projectId: string, names: string[], text: string, characterTagIds?: string[]): ReturnType<WriterApi['previewWorldInfo']>;
   exportCharacterCard(projectId: string, cardId: string): Promise<{ relative: string; bytes: number; specVersion: number; name: string }>;
   removeCharacterCard(projectId: string, cardId: string, expectedHash: string): Promise<{ snapshot: CharacterSnapshot; backup: string; removed: string }>;
   mergeCharacterCards(projectId: string, keepId: string, dropId: string, expectedHash: string): Promise<{ snapshot: CharacterSnapshot; backup: string; mergedInto: string; dropped: string }>;
@@ -231,7 +246,11 @@ export interface WriterApi {
   docxInsight(projectId: string, chapterPath: string): Promise<{ tables: { index: number; rows: number; cellsPerRow: number[]; preview: string }[]; headers: string[] }>;
   editDocxStructure(projectId: string, chapterPath: string, action: { kind: 'appendRow' | 'removeRow' | 'header'; tableIndex?: number; rowIndex?: number; part?: string; paragraphs?: string[] }, expectedHash: string): Promise<{ changed: number; path: string }>;
   saveFidelityCopy(projectId: string, chapterPath: string, paragraphs: string[], expectedHash: string): Promise<{ path: string; paragraphs: number; changed: number }>;
+  readFidelityBody(projectId: string, chapterPath: string, expectedHash: string): Promise<DocxBodySnapshot>;
+  editFidelityBody(projectId: string, chapterPath: string, actions: DocxBodyAction[], expectedHash: string): Promise<DocxBodyEditResult>;
   readFidelitySource(projectId: string, chapterPath: string, expectedHash: string): Promise<{ projectId: string; path: string; hash: string; paragraphs: string[] }>;
+  /** 只改段落格式并另存排版副本；原稿不动。 */
+  formatDocxParagraphs(projectId: string, chapterPath: string, targets: { index: number; format: { align?: 'left' | 'center' | 'right' | 'both'; firstLineChars?: number; lineSpacing?: number; spaceBeforePt?: number; spaceAfterPt?: number } }[], expectedHash: string): Promise<{ projectId: string; sourcePath: string; sourceHash: string; path: string; paragraphs: number; changed: number }>;
   readDiscussion(projectId: string): Promise<{ messages: DiscussionMessageView[]; hash: string; updatedAt: string }>;
   askDiscussion(projectId: string, input: { text: string; connectionId: string }): Promise<{ snapshot: { messages: DiscussionMessageView[]; hash: string }; compressed: number; finish: string }>;
   expandDiscussion(projectId: string, summaryId: string): Promise<DiscussionMessageView[]>;

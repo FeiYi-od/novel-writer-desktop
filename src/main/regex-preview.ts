@@ -11,7 +11,9 @@ export interface RegexPreviewOutput { projectId: string; requestId: string; expa
 export type RegexWorkerFactory = (options: WorkerOptions) => Worker;
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
-const ENV_KEYS = ['user', 'char', 'description', 'personality', 'scenario', 'persona', 'mesExamples', 'lastMessage', 'original', 'seed'];
+const ENV_STRING_KEYS = ['user', 'char', 'description', 'personality', 'scenario', 'persona', 'mesExamples', 'lastMessage', 'original', 'seed', 'userNickname', 'charNickname'] as const;
+const ENV_BOOLEAN_KEYS = ['nicknamePreviewEnabled', 'useNicknameForMacros'] as const;
+const ENV_KEYS = [...ENV_STRING_KEYS, ...ENV_BOOLEAN_KEYS];
 function record(value: unknown, allowed: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('正则预览参数格式无效');
@@ -53,7 +55,11 @@ export function freezeRegexPreviewTask(input: unknown): RegexPreviewTask {
     return script;
   });
   const envInput = record(value.env, ENV_KEYS), env: MacroEnv = {};
-  for (const name of ENV_KEYS) if (envInput[name] !== undefined) env[name as keyof MacroEnv] = string(envInput[name], limits.inputCharacters);
+  for (const name of ENV_STRING_KEYS) if (envInput[name] !== undefined) env[name] = string(envInput[name], limits.inputCharacters);
+  for (const name of ENV_BOOLEAN_KEYS) if (envInput[name] !== undefined) {
+    if (typeof envInput[name] !== 'boolean') throw new Error('昵称预览开关格式无效');
+    env[name] = envInput[name] as boolean;
+  }
   const snapshot = { projectId, requestId, text, scripts, env };
   if (Buffer.byteLength(JSON.stringify(snapshot), 'utf8') > limits.payloadBytes) throw new Error('正则预览参数超过1 MiB');
   return snapshot;
