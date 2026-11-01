@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AIConnection, BookDetails, BookSnapshot, LearnedStyle } from '../../shared/contracts';
 import { selectedStylePrompt } from '../../core/style-analysis';
 import { AIStyleLearning } from './AIStyleLearning';
+import './style-studio-polish.css';
 
 export function StyleStudio({ snapshot, onUpdate, onSave, onDirty, legacyNotes, connections }: {
   snapshot: BookSnapshot; onUpdate: (next: BookSnapshot) => void;

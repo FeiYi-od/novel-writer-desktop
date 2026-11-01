@@ -21,7 +21,7 @@ async function main() {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const choose = (folder: string) => app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, folder);
   const open = async (folder: string) => { await choose(folder); await page.getByRole('button', { name: '＋ 打开小说文件夹', exact: true }).click(); await page.getByText(`已打开「${path.basename(folder)}」`, { exact: false }).waitFor(); };
-  const enter = () => page.getByRole('button', { name: '知识检索', exact: true }).click();
+  const enter = async () => { await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click(); };
   const release = () => app.evaluate(() => { const state = globalThis as any; state.__selectionHold = false; for (const resolve of state.__selectionHeld.splice(0)) resolve(); });
   const waitHeld = async () => {
     const deadline = Date.now() + 5000;

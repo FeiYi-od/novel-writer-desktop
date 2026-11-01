@@ -1,0 +1,126 @@
+/* Quiet structure for long-form planning; no movement on repeated actions. */
+.planning-page {
+  min-width: 0;
+  color: #344e3a;
+}
+
+.planning-page .ai-heading {
+  margin-bottom: 24px;
+}
+
+.planning-page .ai-heading small {
+  color: #687e68;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .18em;
+}
+
+.planning-page .ai-heading h1 {
+  color: #263e2e;
+  font-size: 30px;
+  letter-spacing: .04em;
+  margin: 9px 0;
+}
+
+.planning-page .ai-heading p {
+  color: #687a67;
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.planning-page .planning-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.planning-page .planning-tabs button {
+  min-height: 38px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  color: #49634e;
+  background: #fffefa;
+  border-color: #d7e0d4;
+}
+
+.planning-page .planning-tabs button.active {
+  color: #fff;
+  background: #365741;
+  border-color: #365741;
+}
+
+.planning-page .ai-columns {
+  grid-template-columns: minmax(250px, 340px) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.planning-page .ai-panel {
+  border: 1px solid #dce4d8;
+  border-radius: 12px;
+  background: #fffefa;
+  box-shadow: 0 4px 18px rgba(36, 57, 39, .045);
+  padding: 24px;
+}
+
+.planning-page .ai-panel h2 {
+  color: #304a36;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+
+.planning-page .ai-form label {
+  color: #526b55;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.planning-page .ai-form textarea,
+.planning-page .ai-form select {
+  border-color: #d7e1d5;
+  font-weight: 400;
+}
+
+.planning-page .ai-form textarea {
+  min-height: 130px;
+}
+
+.planning-page .ai-form .material-preview {
+  min-height: 320px;
+  font: 14px/1.9 'Microsoft YaHei', sans-serif;
+}
+
+.planning-page .ai-panel p {
+  color: #637765;
+  line-height: 1.75;
+}
+
+.planning-page .material-output {
+  background: #f5f7f1;
+  border: 1px solid #e3e9de;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.planning-page button:focus-visible,
+.planning-page textarea:focus-visible,
+.planning-page select:focus-visible,
+.planning-page summary:focus-visible {
+  outline: 2px solid #365741;
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .planning-page { padding: 22px 18px 32px; }
+  .planning-page .ai-columns { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .planning-page .ai-panel { padding: 20px; }
+}
+
+@media (forced-colors: active) {
+  .planning-page button:focus-visible,
+  .planning-page textarea:focus-visible,
+  .planning-page select:focus-visible,
+  .planning-page summary:focus-visible { outline-color: Highlight; }
+}

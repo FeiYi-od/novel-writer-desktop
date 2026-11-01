@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AIConnection, AITask, PlanningKind, PlanningSnapshot, UiDraft } from '../../shared/contracts';
 import { planningHeadings, planningKinds, planningLabels } from '../../core/planning';
+import './planning-polish.css';
 const statusLabels: Record<AITask['status'], string> = { running: '生成中', complete: '已完成', incomplete: '未完整结束', cancelled: '已停止', failed: '失败', interrupted: '上次中断' };
 export function Planning({ projectId, connections, blocked, onDirty, onSaved }: { projectId: string; connections: AIConnection[]; blocked: boolean; onDirty: (dirty: boolean) => void; onSaved: (id: string) => Promise<void> }) {
   const [snapshot, setSnapshot] = useState<PlanningSnapshot | null>(null); const [kind, setKind] = useState<PlanningKind>('outline');
@@ -45,7 +46,7 @@ export function Planning({ projectId, connections, blocked, onDirty, onSaved }: 
   return <section className="ai-page planning-page"><header className="ai-heading"><div><small>STORY WORKSHOP</small><h1>创作筹备</h1><p>从构想到设定：保存提示词与草稿，确认后用于本书写作和审稿。</p></div></header>
     {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}{message && <p role="status">{message}</p>}
     {restorable?.values.doc && <div className="notice" role="status">上次退出前有未保存的筹备草稿（{new Date(restorable.updatedAt).toLocaleString()}）。<button disabled={busy} onClick={restoreDraft}>恢复上次草稿</button><button disabled={busy} onClick={discardDraft}>丢弃草稿</button></div>}
-    {snapshot && <><div className="planning-tabs">{planningKinds.map(item => <button key={item} className={kind === item ? 'active' : ''} disabled={busy} onClick={() => { setKind(item); setSelected(''); }}>{planningLabels[item]}</button>)}</div>
+    {snapshot && <><div className="planning-tabs" role="group" aria-label="选择筹备内容">{planningKinds.map(item => <button key={item} className={kind === item ? 'active' : ''} aria-pressed={kind === item} disabled={busy} onClick={() => { setKind(item); setSelected(''); }}>{planningLabels[item]}</button>)}</div>
     <div className="ai-columns"><aside className="ai-panel ai-form"><h2>创作要求</h2>
       <label>本书提示词<textarea aria-label="筹备提示词" disabled={busy} maxLength={20000} value={snapshot.value.prompts[kind]} onChange={e => edit('prompts', e.target.value)} /></label>
       <label>创作构想<textarea aria-label="筹备构想" disabled={busy} maxLength={50000} value={snapshot.value.briefs[kind]} placeholder="题材、主题、人物目标、期望走向或需要解决的问题……" onChange={e => edit('briefs', e.target.value)} /></label>

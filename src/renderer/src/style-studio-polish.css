@@ -1,0 +1,52 @@
+/* Quiet, readable surfaces for the reference → analysis → style workflow. */
+.style-page { min-width: 0; }
+.style-page .studio-layout { gap: 20px; }
+.style-page .source-panel,
+.style-page .style-card,
+.style-page .style-learning-panel {
+  border: 1px solid #dce4d8;
+  border-radius: 12px;
+  background: #fffefa;
+  box-shadow: 0 4px 18px rgba(36, 57, 39, .045);
+}
+.style-page .panel-heading h2,
+.style-page .analyze-form h2,
+.style-page .style-learning-panel h2 { color: #304a36; font-size: 16px; font-weight: 600; }
+.style-page .panel-heading { flex-wrap: wrap; }
+.style-page .panel-heading > span,
+.style-page .source-panel > p,
+.style-page .analyze-form > small,
+.style-page .source-list small,
+.style-page .style-card footer small { color: #637765; font-size: 12px; line-height: 1.65; }
+.style-page .source-list label { font-size: 13px; color: #405548; }
+.style-page .source-list label span,
+.style-page .style-card h3,
+.style-page .style-card p,
+.style-page .style-card footer small { overflow-wrap: anywhere; min-width: 0; }
+.style-page .style-empty { background: #f7f9f3; color: #526b55; padding: 52px 20px; }
+.style-page .style-empty p,
+.style-page .style-card > p { color: #526b55; font-size: 13px; }
+.style-page .style-card header,
+.style-page .style-card footer { flex-wrap: wrap; }
+.style-page .style-metrics { color: #607560; font-size: 12px; }
+.style-page .style-learning-panel { margin-top: 24px; }
+.style-page button:focus-visible,
+.style-page input:focus-visible,
+.style-page select:focus-visible,
+.style-page textarea:focus-visible,
+.style-page summary:focus-visible { outline: 2px solid #365741; outline-offset: 2px; }
+@media (max-width: 900px) {
+  .style-page { padding: 22px 18px 36px; }
+  .style-page .page-title { flex-wrap: wrap; gap: 14px; }
+  .style-page .studio-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .style-page .source-panel,
+  .style-page .style-card { padding: 18px; }
+  .style-page .style-edit-modal { width: min(100%, 660px); padding: 20px; }
+}
+@media (forced-colors: active) {
+  .style-page button:focus-visible,
+  .style-page input:focus-visible,
+  .style-page select:focus-visible,
+  .style-page textarea:focus-visible,
+  .style-page summary:focus-visible { outline-color: Highlight; }
+}

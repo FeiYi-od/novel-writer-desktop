@@ -18,7 +18,7 @@ async function main() {
   };
   const openMaterials = async () => {
     await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click();
-    await page.getByRole('button', { name: '资料转换', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '资料转换', exact: true }).click();
     await page.getByLabel('转换原文').waitFor();
   };
   let page: import('playwright').Page; let app: Awaited<ReturnType<typeof launch>>['app'];

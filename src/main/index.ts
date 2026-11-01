@@ -714,7 +714,8 @@ async function bootstrap() {
     });
   }
   window = new BrowserWindow({
-    title: '小说编写器', width: 1440, height: 960, minWidth: 1000, minHeight: 720,
+    title: '星序 · starwriting', width: 1440, height: 960, minWidth: 1000, minHeight: 720,
+    icon: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '../../assets'), 'app-icon.png'),
     show: !process.env.NOVEL_WRITER_TEST_DATA,
     backgroundColor: '#f5f3ee', autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, offscreen: Boolean(process.env.NOVEL_WRITER_TEST_DATA) }

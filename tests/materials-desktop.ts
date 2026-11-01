@@ -50,7 +50,7 @@ async function main() {
     await page.getByText('TXT 已保存到所选文件夹', { exact: true }).waitFor();
     const textName = (await fs.readdir(folder)).find(name => name.endsWith('.txt'))!;
     const original = await fs.readFile(path.join(folder, textName)); assert.match(original.toString(), /^　　第一段正文/);
-    await page.getByRole('button', { name: '资料转换', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '资料转换', exact: true }).click();
     await choose(imported); await page.getByRole('button', { name: '导入 DOCX / TXT 文段' }).click();
     await page.getByLabel('转换原文').filter({ visible: true }).waitFor();
     await page.waitForFunction(() => (document.querySelector('[aria-label="转换原文"]') as HTMLTextAreaElement)?.value.includes('温柔'));
@@ -64,7 +64,7 @@ async function main() {
     await page.getByLabel('连接名称', { exact: true }).fill('资料整理模型'); await page.getByLabel('模型名称', { exact: true }).fill('mock-material');
     await page.getByRole('button', { name: '保存模型连接', exact: true }).click();
     await page.getByText('模型连接已保存', { exact: true }).waitFor();
-    await page.getByRole('button', { name: '资料转换', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '资料转换', exact: true }).click();
     await page.getByLabel('资料类型').selectOption('world'); await page.getByLabel('转换原文').fill('只有月光能驱动列车。');
     await page.getByLabel('整理模型').selectOption({ label: '资料整理模型 · mock-material' });
     await page.getByRole('button', { name: '用 AI 整理资料' }).click();
@@ -79,7 +79,7 @@ async function main() {
     await page.getByLabel('朱雀网关地址').fill(baseUrl); await page.getByLabel('朱雀 API Key').fill('test-zhuque-secret');
     await page.getByRole('button', { name: '保存朱雀连接' }).click(); await page.getByText('朱雀连接已保存（密钥经系统加密，仅本机可用）', { exact: true }).waitFor();
     assert.equal(await page.getByLabel('朱雀 API Key').inputValue(), '');
-    await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
     await page.getByRole('button', { name: '发送章节并检测 AI 率' }).click(); await page.getByText('朱雀检测完成', { exact: true }).waitFor();
     await page.getByText('30.0%', { exact: true }).waitFor(); await page.getByText('10.0%', { exact: true }).waitFor();
     assert.equal(calls.at(-1)?.url, '/v1/providers/zhuque-text/classify'); assert.equal(calls.at(-1)?.body.is_merge, false);
@@ -88,7 +88,7 @@ async function main() {
     await capture('detection.png');
     const other = path.join(fixture, '测试小说乙'); await fs.mkdir(other); await choose(other);
     await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click();
-    await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
     await page.getByText('尚无检测报告。填写自己的 Makers API Key 后可发起检测。', { exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log('Materials desktop passed: TXT save, DOCX extraction, confirmed Markdown cards/world, model conversion, encrypted Zhuque connection, ratios, source preservation, cross-book reports.');

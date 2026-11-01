@@ -53,7 +53,7 @@ async function main() {
     assert.match(copyableText(recovered.content), /外部冲突时仍要保留的本地草稿。/u, '恢复区必须保存本次编辑内容');
     await app!.evaluate(({ app: instance }) => instance.exit(0)); app = null;
     // No one-click adoption of an unconfirmed material draft, even when hidden.
-    await launch(); await open(); await page.getByRole('button', { name: '资料转换', exact: true }).click(); await page.getByLabel('转换原文').fill('未确认的设定不能进入正史。'); await page.getByRole('button', { name: '保存并退出', exact: true }).click(); await page.getByRole('alert').filter({ hasText: '未确认的AI资料不会自动采用' }).first().waitFor(); assert.equal(app!.process().exitCode, null);
+    await launch(); await open(); await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '资料转换', exact: true }).click(); await page.getByLabel('转换原文').fill('未确认的设定不能进入正史。'); await page.getByRole('button', { name: '保存并退出', exact: true }).click(); await page.getByRole('alert').filter({ hasText: '未确认的AI资料不会自动采用' }).first().waitFor(); assert.equal(app!.process().exitCode, null);
     await app!.evaluate(({ app: instance }) => instance.exit(0)); app = null;
     // Running model requests are checked in the main process, beyond page dirty state.
     await launch(); await open(); const doc = await page.evaluate(id => window.writer.createChapter(id), projectId);

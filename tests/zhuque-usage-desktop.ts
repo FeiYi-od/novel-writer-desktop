@@ -56,7 +56,7 @@ async function main() {
     assert.match(await page.locator('.detection-test-result').innerText(), /本次扣减[\s\S]*5 Token/u);
     assert.match(calls.at(-1)!.text, /固定虚构短文/u); assert.ok(!calls.at(-1)!.text.includes('第一段虚构检测正文'));
 
-    await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
     await page.getByText('本机朱雀用量', { exact: true }).waitFor();
     await stat(0, '1'); await stat(2, '5'); await estimated('5');
 
@@ -88,7 +88,7 @@ async function main() {
     await page.locator('.tiptap').fill('这段虚构正文会让模拟服务返回错误。');
     await page.getByRole('button', { name: '保存 TXT', exact: true }).click();
     await page.getByText('TXT 已保存到所选文件夹', { exact: true }).waitFor();
-    await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
     await page.getByRole('button', { name: '发送章节并检测 AI 率' }).click();
     await page.getByRole('alert').filter({ hasText: 'HTTP 500' }).first().waitFor();
     assert.match(await page.getByRole('alert').first().innerText(), /12 Token/u);
@@ -108,7 +108,7 @@ async function main() {
     const closing = app!.waitForEvent('close');
     await page.getByRole('button', { name: '保存并退出', exact: true }).click();
     await closing; app = null;
-    await launch(); await open(); await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
+    await launch(); await open(); await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
     await page.getByText('本机朱雀用量', { exact: true }).waitFor();
     await stat(0, '3'); await stat(1, '1'); await stat(2, '47'); await estimated('1,012');
 
@@ -135,7 +135,7 @@ async function main() {
 
     // Usage is device/connection scoped, while reports stay per novel.
     const other = path.join(fixture, '另一本小说'); await fs.mkdir(other); await open('另一本小说');
-    await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '朱雀检测', exact: true }).click();
     await page.getByText('尚无检测报告。填写自己的 Makers API Key 后可发起检测。', { exact: true }).waitFor();
     await stat(0, '5');
     assert.deepEqual(errors, []);

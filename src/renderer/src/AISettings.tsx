@@ -5,6 +5,8 @@ import { KnowledgeSettings } from './KnowledgeSettings';
 import { DetectorSettings } from './DetectorSettings';
 import { useSaveBeforeExit } from './save-before-exit';
 import { capabilitySummary, describeModel, filterModels, type ModelCapability } from '../../core/model-capabilities';
+import { ProviderBadge } from './ProviderBadge';
+import './model-settings-polish.css';
 
 const initial = (): AIConnectionEdit => ({ name: '', baseUrl: '', model: '', adapter: 'generic', thinking: 'default', timeoutSeconds: 300, contextWindow: 32768, maxOutputTokens: 4096, tokenParameter: 'max_tokens', apiKey: '' });
 const presets = chatPresets;
@@ -40,15 +42,15 @@ export function AISettings({ onDirty, onSaved }: { onDirty: (value: boolean) => 
       setMessage(result.models.length ? (result.cached ? '已读取缓存的模型列表' : '模型列表已获取，请选择或手工填写') : '服务未列出模型，可以继续手工填写');
     });
   }
-  return <section className="ai-page">
+  return <section className="ai-page model-settings-page">
     <header className="ai-heading"><div><small>MODEL CONNECTIONS</small><h1>模型设置</h1><p>保存多个模型连接，在写作与审稿时分别选择。</p></div></header>
-    <div className="actions model-categories"><button className={category === 'chat' ? 'primary' : ''} onClick={() => setCategory('chat')}>对话模型</button><button className={category === 'embedding' ? 'primary' : ''} onClick={() => setCategory('embedding')}>嵌入模型</button><button className={category === 'rerank' ? 'primary' : ''} onClick={() => setCategory('rerank')}>重排序模型</button><button className={category === 'detector' ? 'primary' : ''} onClick={() => setCategory('detector')}>朱雀检测连接</button></div>
+    <div className="actions model-categories" aria-label="模型设置类别"><button aria-pressed={category === 'chat'} className={category === 'chat' ? 'primary' : ''} onClick={() => setCategory('chat')}>对话模型</button><button aria-pressed={category === 'embedding'} className={category === 'embedding' ? 'primary' : ''} onClick={() => setCategory('embedding')}>嵌入模型</button><button aria-pressed={category === 'rerank'} className={category === 'rerank' ? 'primary' : ''} onClick={() => setCategory('rerank')}>重排序模型</button><button aria-pressed={category === 'detector'} className={category === 'detector' ? 'primary' : ''} onClick={() => setCategory('detector')}>朱雀检测连接</button></div>
     <div hidden={category !== 'embedding'}><KnowledgeSettings kind="embedding" onDirty={setEmbeddingDirty} hashRef={auxiliaryHash} /></div><div hidden={category !== 'rerank'}><KnowledgeSettings kind="rerank" onDirty={setRerankDirty} hashRef={auxiliaryHash} /></div>
     <div hidden={category !== 'detector'}>{error && <div className="error" role="alert">{error}</div>}<DetectorSettings onDirty={setDetectorDirty} /></div>
     <div hidden={category !== 'chat'}>
     {error && <div className="error" role="alert">{error}</div>}{message && <p role="status">{message}</p>}
     <div className="ai-columns"><aside className="ai-panel"><h2>我的模型</h2>
-      {snapshot.connections.map(profile => <button disabled={busy} className={edit.id === profile.id ? 'active' : ''} key={profile.id} onClick={() => switchEdit({ ...profile, apiKey: '' })}>{profile.name}<small>{profile.model} · {profile.hasKey ? '密钥已保存' : '无密钥'}</small></button>)}
+      {snapshot.connections.map(profile => <button disabled={busy} className={edit.id === profile.id ? 'active' : ''} key={profile.id} onClick={() => switchEdit({ ...profile, apiKey: '' })}><span className="provider-entry"><ProviderBadge baseUrl={profile.baseUrl} adapter={profile.adapter} /><span className="provider-entry-text">{profile.name}<small>{profile.model} · {profile.hasKey ? '密钥已保存' : '无密钥'}</small></span></span></button>)}
       <button disabled={busy} onClick={() => switchEdit(initial())}>＋ 新增模型连接</button>
       <p>密钥使用本机系统加密，保存后不会回传显示。模型配置不放入小说目录。</p>
     </aside><form className="ai-panel ai-form" onSubmit={event => { event.preventDefault(); void run(async () => {

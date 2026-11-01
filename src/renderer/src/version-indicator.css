@@ -1,0 +1,9 @@
+.brand .app-version {
+  display: block;
+  margin-top: 2px;
+  color: #526653;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+}

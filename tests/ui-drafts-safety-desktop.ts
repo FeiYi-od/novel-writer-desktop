@@ -25,7 +25,7 @@ async function main() {
     page = await app.firstWindow(); page.setDefaultTimeout(20000);
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, folder);
     await page.getByRole('button', { name: '＋ 打开小说文件夹', exact: true }).click();
-    await page.getByRole('button', { name: '资料转换', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '资料转换', exact: true }).click();
     await page.getByLabel('转换原文').waitFor();
   };
   const text = 'A'.repeat(100000), preview = 'B'.repeat(100000);

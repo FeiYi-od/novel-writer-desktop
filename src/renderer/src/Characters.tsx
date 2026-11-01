@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { CharacterCard, CharacterEdit, CharacterFields, CharacterSnapshot } from '../../shared/contracts';
 import { characterContext, emptyCharacter } from '../../core/characters';
+import './character-dialog.css';
+import './characters-polish.css';
 
 const labels: [Exclude<keyof CharacterFields, 'alternateGreetings'>, string][] = [
   ['name', '角色名称'], ['description', '角色描述'], ['personality', '性格与行为边界'], ['scenario', '角色背景'],
@@ -18,7 +20,48 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
   const [draftError, setDraftError] = useState('');
   const [notice, setNotice] = useState('');
   const [merging, setMerging] = useState<string | null>(null);
+  const modal = useRef<HTMLDialogElement>(null);
+  const restoreFocus = useRef<{ target: HTMLElement; anchor: Element | null } | null>(null);
+  const modalKind = draft ? 'edit' : merging && snapshot ? 'merge' : '';
+  useLayoutEffect(() => {
+    if (!modalKind || !modal.current) return;
+    const dialog = modal.current;
+    const container = dialog.closest<HTMLElement>('.full-view');
+    let previous: HTMLElement | null = null;
+    const syncVisibility = () => {
+      if (container?.hidden) { if (dialog.open) dialog.close(); return; }
+      if (!dialog.open) {
+        previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        dialog.showModal();
+      }
+    };
+    const observer = container ? new MutationObserver(syncVisibility) : null;
+    if (container) observer?.observe(container, { attributes: true, attributeFilter: ['hidden'] });
+    syncVisibility();
+    return () => {
+      observer?.disconnect();
+      if (dialog.open) dialog.close();
+      if (previous?.isConnected && !previous.closest('[inert]')) {
+        if (previous.matches(':disabled')) restoreFocus.current = { target: previous, anchor: document.activeElement };
+        else { previous.focus(); restoreFocus.current = null; }
+      }
+    };
+  }, [modalKind]);
+  useEffect(() => {
+    if (modalKind || busy) return;
+    const pendingRestore = restoreFocus.current; restoreFocus.current = null;
+    const target = pendingRestore?.target;
+    if (target?.isConnected && document.activeElement === pendingRestore?.anchor && !target.matches(':disabled') && !target.closest('[inert]')) target.focus();
+  }, [modalKind, busy]);
   const pending = useRef(false); const tokens = useRef(new Set<string>());
+  function trapFocus(event: KeyboardEvent<HTMLDialogElement>) {
+    if (event.key !== 'Tab' || event.nativeEvent.isComposing) return;
+    const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], summary, [tabindex]:not([tabindex="-1"])')].filter(element => element.getClientRects().length > 0);
+    const first = controls[0], last = controls.at(-1), current = document.activeElement;
+    if (!first || !last) { event.preventDefault(); event.currentTarget.focus(); }
+    else if (event.shiftKey && (current === first || !event.currentTarget.contains(current))) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (current === last || !event.currentTarget.contains(current))) { event.preventDefault(); first.focus(); }
+  }
   useEffect(() => { let live = true; void window.writer.readCharacters(projectId).then(value => { if (live) setSnapshot(value); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; for (const token of tokens.current) void window.writer.releaseCharacterImport(projectId, token); }; }, [projectId]);
   useEffect(() => { onDirty(Boolean(draft) || busy); return () => onDirty(false); }, [draft, busy, onDirty]);
   // Editing state survives an exit; it never edits the project until the author saves.
@@ -85,20 +128,21 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
     {legacyNotes && <details className="legacy-style-note"><summary>原人物笔记（已保留）</summary><p>{legacyNotes}</p></details>}
     <div className="character-grid">{cards.filter(card => card.name.includes(search.trim())).map(card => <article className={`character-card ${card.enabled ? 'enabled' : ''}`} key={card.id}>
       <div className="character-portrait">{snapshot?.portraits[card.portrait] ? <img src={snapshot.portraits[card.portrait]} alt={`${card.name}头像`} /> : <span>{card.name.slice(0, 1)}</span>}</div>
-      <div className="character-info"><small>{card.source.format} · {card.portrait ? '带头像' : '文字卡'}</small><h2>{card.name}</h2><p>{card.description || card.personality || '尚未填写角色描述'}</p><footer><label><input type="checkbox" aria-label={`启用角色 ${card.name}`} checked={card.enabled} disabled={busy} onChange={e => { const enabled = e.target.checked; void action(async () => { setSnapshot(await window.writer.saveCharacter(projectId, { id: card.id, fields: card, enabled }, snapshot!.hash)); }); }} />用于本书</label><button disabled={busy} onClick={() => editCard(card)}>查看与编辑</button><button data-testid="card-export" disabled={busy} title="导出为 SillyTavern 可直接打开的 PNG 名片" onClick={() => void action(async () => { const result = await window.writer.exportCharacterCard(projectId, card.id); setNotice(`已导出 ${result.relative}（V${result.specVersion}，${result.bytes} 字节）`); })}>导出名片</button><button data-testid="card-merge" disabled={busy || cards.length < 2} title="把这张卡合并进另一张：空字段补齐、问候语合并，操作前先备份" onClick={() => setMerging(card.id)}>合并到…</button><button data-testid="card-remove" disabled={busy} title="删除前会把当前角色库备份到本书资料" onClick={() => void action(async () => { const result = await window.writer.removeCharacterCard(projectId, card.id, snapshot!.hash); setSnapshot(result.snapshot); setNotice(`已删除「${result.removed}」，备份：${result.backup}`); })}>删除（先备份）</button></footer></div>
+      <div className="character-info"><small>{card.source.format} · {card.portrait ? '带头像' : '文字卡'}</small><h2 title={card.name}>{card.name}</h2><p>{card.description || card.personality || '尚未填写角色描述'}</p><footer><label><input type="checkbox" aria-label={`启用角色 ${card.name}`} checked={card.enabled} disabled={busy} onChange={e => { const enabled = e.target.checked; void action(async () => { setSnapshot(await window.writer.saveCharacter(projectId, { id: card.id, fields: card, enabled }, snapshot!.hash)); }); }} />用于本书</label><button disabled={busy} onClick={() => editCard(card)}>查看与编辑</button><button data-testid="card-export" disabled={busy} title="导出为 SillyTavern 可直接打开的 PNG 名片" onClick={() => void action(async () => { const result = await window.writer.exportCharacterCard(projectId, card.id); setNotice(`已导出 ${result.relative}（V${result.specVersion}，${result.bytes} 字节）`); })}>导出名片</button><button data-testid="card-merge" disabled={busy || cards.length < 2} title="把这张卡合并进另一张：空字段补齐、问候语合并，操作前先备份" onClick={() => setMerging(card.id)}>合并到…</button><button data-testid="card-remove" disabled={busy} title="删除前会把当前角色库备份到本书资料" onClick={() => void action(async () => { const result = await window.writer.removeCharacterCard(projectId, card.id, snapshot!.hash); setSnapshot(result.snapshot); setNotice(`已删除「${result.removed}」，备份：${result.backup}`); })}>删除（先备份）</button></footer></div>
     </article>)}</div>
     {snapshot && !cards.length && <div className="empty-library"><b>让故事中的人物在这里相遇</b><p>导入一张图片卡，或从文字设定开始。</p></div>}
     {notice && <p className="notice" role="status">{notice}</p>}
-    {merging && snapshot && <div className="modal-overlay"><section className="book-modal merge-modal" role="dialog" aria-modal="true" aria-label="合并角色卡">
+    {merging && snapshot && !draft && <dialog ref={modal} className="modal-overlay character-native-dialog" aria-label="合并角色卡" onKeyDown={trapFocus} onCancel={event => { event.preventDefault(); if (!busy && !pending.current) setMerging(null); }}><section className="book-modal merge-modal">
       <h2>合并角色卡</h2>
       <p>当前卡片：<b>{snapshot.value.cards.find(card => card.id === merging)?.name}</b>。合并后本卡会被并入选中的卡片并删除，**合并前会先备份整份角色库**。</p>
       <ul className="merge-targets">{snapshot.value.cards.filter(card => card.id !== merging).map(card => <li key={card.id}>
         <button data-testid="merge-into" disabled={busy} onClick={() => void action(async () => { const result = await window.writer.mergeCharacterCards(projectId, card.id, merging, snapshot.hash); setSnapshot(result.snapshot); setNotice(`已合并「${result.dropped}」→「${result.mergedInto}」，备份：${result.backup}`); setMerging(null); })}>合并进「{card.name}」</button>
       </li>)}</ul>
+      {error && <div role="alert" className="error">{error}</div>}
       <footer><button disabled={busy} onClick={() => setMerging(null)}>取消</button></footer>
-    </section></div>}
+    </section></dialog>}
     <details className="character-context"><summary>本书角色上下文预览（{context.length} 位）</summary><pre>{context.map(item => item.text).join('\n\n') || '在角色卡上勾选“用于本书”，即可同时选择图片卡和文字卡。'}</pre><p>AI 请求仅包含启用角色的名称、描述、性格与背景；开场白、作者说明和扩展不会自动变成正文。</p></details>
-    {draft && <div className="modal-overlay"><section className="character-modal" role="dialog" aria-modal="true" aria-label="角色卡编辑">
+    {draft && <dialog ref={modal} className="modal-overlay character-native-dialog" aria-label="角色卡编辑" onKeyDown={trapFocus} onCancel={event => { event.preventDefault(); if (!busy && !pending.current && window.confirm('关闭并放弃当前角色编辑？')) void action(releaseDraft); }}><section className="character-modal">
       <header><div><span className="eyebrow">{draft.edit.importToken ? 'IMPORT PREVIEW' : 'CHARACTER DETAILS'}</span><h2>{draft.edit.importToken ? '确认导入角色卡' : draft.edit.id ? '编辑角色卡' : '新建文字角色卡'}</h2></div><span>归属：{title}</span></header>
       <div className="character-form"><aside><div className="character-portrait large">{draft.image ? <img src={draft.image} alt="角色卡预览" /> : <span>人</span>}</div><button disabled={busy} onClick={() => void action(async () => {
         const portrait = await window.writer.chooseCharacterPortrait(projectId);
@@ -112,8 +156,8 @@ export function Characters({ projectId, title, legacyNotes, onDirty }: { project
         {labels.map(([key, label]) => <label key={key}>{label}{key === 'name' ? <input aria-label={label} maxLength={200} disabled={busy} value={draft.edit.fields[key]} onChange={e => setDraft({ ...draft, edit: { ...draft.edit, fields: { ...draft.edit.fields, [key]: e.target.value } } })} /> : <textarea aria-label={label} maxLength={100000} disabled={busy} value={draft.edit.fields[key]} onChange={e => setDraft({ ...draft, edit: { ...draft.edit, fields: { ...draft.edit.fields, [key]: e.target.value } } })} />}</label>)}
         {!!draft.edit.fields.alternateGreetings.length && <details><summary>候选开场白（{draft.edit.fields.alternateGreetings.length} 条，原样保留）</summary>{draft.edit.fields.alternateGreetings.map((text, i) => <pre key={i}>{text}</pre>)}</details>}
       </div></div>
-      {error && <div role="alert" className="error">{error}</div>}
+      {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}
       <footer><button disabled={busy} onClick={() => { if (window.confirm('关闭并放弃当前角色编辑？')) void action(releaseDraft); }}>取消</button><button className="primary" disabled={busy || needsImportReselect || needsPortraitReselect || !draft.edit.fields.name.trim()} onClick={() => void action(async () => { const next = await window.writer.saveCharacter(projectId, draft.edit, draft.hash); setSnapshot(next); await releaseDraft(); })}>{busy ? '保存中…' : draft.edit.importToken ? '确认导入' : '保存角色卡'}</button></footer>
-    </section></div>}
+    </section></dialog>}
   </section>;
 }

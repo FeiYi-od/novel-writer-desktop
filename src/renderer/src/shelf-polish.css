@@ -1,15 +1,25 @@
 /* Shelf interactions stay immediate during frequent use; focus must remain visible. */
 .library-page { min-width: 0; }
-.library-page .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 20px; }
-.library-page .shelf-card { min-width: 0; min-height: 260px; padding: 20px; gap: 20px; border-color: #dce3d8; box-shadow: 0 4px 18px rgba(36, 57, 39, .05); }
+.library-page .page-title { align-items: flex-end; margin-bottom: 32px; }
+.library-page .page-title h1 { margin: 8px 0 10px; letter-spacing: .01em; font-size: 30px; font-weight: 600; color: #202923; }
+.library-page .page-title h1 span { color: #657169; }
+.library-page .page-title p { color: #657169; font-size: 13px; line-height: 1.6; }
+.library-page .page-title input { min-height: 44px; border-radius: 10px; border-color: #d8dcd6; background: #fff; }
+.library-page .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 18px; }
+.library-page .shelf-card { min-width: 0; min-height: 250px; padding: 20px; gap: 20px; border: 1px solid #e1e4df; border-radius: 14px; background: #fff; box-shadow: 0 3px 12px rgba(30, 38, 32, .045); }
 .library-page .cover-button { border-radius: 4px 9px 9px 4px; align-self: flex-start; }
-.library-page .cover-button:focus-visible { outline: 3px solid #365741; outline-offset: 4px; }
+.library-page .cover-art:not(.small) { width: 128px; height: 192px; background: linear-gradient(150deg, #434b48, #737e77 75%, #a4aca6); border-left-color: #262d2a55; }
+.library-page .cover-button:focus-visible { outline: 3px solid #394841; outline-offset: 4px; }
 .library-page .cover-title { max-height: 150px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; padding: 4px 16px; }
-.library-page .card-details h2 { overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-.library-page .card-details p { overflow-wrap: anywhere; color: #687864; }
-.library-page .card-meta { color: #63775e; letter-spacing: .03em; }
+.library-page .card-details h2 { overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: #222d26; line-height: 1.4; margin: 10px 0; }
+.library-page .card-details p { overflow-wrap: anywhere; color: #5d6b61; line-height: 1.75; }
+.library-page .card-meta { color: #66746a; font-size: 11px; letter-spacing: .03em; }
 .library-page .card-actions button { font-size: 12px; min-height: 36px; }
-.library-page input:focus-visible, .library-page button:focus-visible { outline: 2px solid #365741; outline-offset: 3px; }
+.library-page .card-actions .primary { background: #303735; border-color: #303735; color: #fff; }
+.library-page .card-actions .primary:hover:not(:disabled) { background: #171c1a; }
+.library-page input:focus-visible, .library-page button:focus-visible { outline: 2px solid #394841; outline-offset: 3px; }
+.library-page .empty-library { max-width: 620px; margin: 60px auto; padding: 40px 20px; border: 1px solid #e1e4df; border-radius: 14px; background: #fff; color: #33453a; }
+.library-page .empty-library p { color: #657169; font-size: 13px; }
 .library-page .empty-library button { margin-top: 8px; }
 @media (max-width: 760px) {
   .library-page { padding: 22px 18px 36px; }
@@ -21,4 +31,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .library-page button { transition: none; }
+}
+@media (forced-colors: active) {
+  .library-page input:focus-visible, .library-page button:focus-visible { outline-color: Highlight; }
 }

@@ -39,6 +39,19 @@ import { exitSaves } from './save-before-exit';
 import { MaterialSyncPanel } from './MaterialSyncPanel';
 import type { MaterialSyncSnapshot } from '../../shared/material-sync';
 import { UpdatePanel } from './UpdatePanel';
+import './version-indicator.css';
+import './topbar-polish.css';
+
+function NavIcon({ type }: { type: 'shelf' | 'writer' | 'people' | 'style' | 'model' }) {
+  const shapes = {
+    shelf: <><path d="M4 4.5h6.5v14H4zM13 4.5h7v14h-7z" /><path d="M6.5 8h1.5M15.5 8h2" /></>,
+    writer: <><path d="m5 16 9.6-9.6 3 3L8 19H5z" /><path d="m13.4 7.6 3 3M4.5 20h6" /></>,
+    people: <><circle cx="12" cy="8" r="3" /><path d="M5.5 19c.4-3.2 2.6-5 6.5-5s6.1 1.8 6.5 5" /></>,
+    style: <><path d="M12 3.5 13.8 9l5.7 2-5.7 2L12 18.5 10.2 13l-5.7-2 5.7-2z" /><path d="m18.5 16 .6 1.8L21 18.5l-1.9.7-.6 1.8-.6-1.8-1.9-.7 1.9-.7z" /></>,
+    model: <><rect x="5" y="6" width="14" height="12" rx="3" /><path d="M9 11h.01M15 11h.01M9 14.5c1.7 1 4.3 1 6 0M12 6V4M9 19v1M15 19v1" /></>
+  };
+  return <svg className="topbar-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{shapes[type]}</svg>;
+}
 
 const tabs: { id: NoteKind | 'ai' | 'memory'; label: string }[] = [
   { id: 'characters', label: '人物' }, { id: 'world', label: '世界观' }, { id: 'preset', label: '预设' },
@@ -88,6 +101,16 @@ export function App() {
   const [usageOpen, setUsageOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateVersion, setUpdateVersion] = useState('');
+  const [versionUnavailable, setVersionUnavailable] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void window.writer.updateVersion().then(version => {
+      if (!active) return;
+      if (typeof version !== 'string' || !version.trim() || version.length > 128) { setVersionUnavailable(true); return; }
+      setUpdateVersion(version); setVersionUnavailable(false);
+    }).catch(() => { if (active) setVersionUnavailable(true); });
+    return () => { active = false; };
+  }, []);
   const [worldOpen, setWorldOpen] = useState<string | null>(null);
   const [mappingDirty, setMappingDirty] = useState(false);
   const [mappingBusy, setMappingBusy] = useState(false);
@@ -410,16 +433,19 @@ export function App() {
       } finally { pending.current = false; setBusy(false); }
     }} />}
     <header className="topbar">
-      <div className="brand"><span className="brand-icon">文</span><div>小说编写器<small>把故事写下去</small></div></div>
-      <nav className="main-nav"><button className={view === 'shelf' ? 'active' : ''} disabled={busy} onClick={() => setView('shelf')}>我的书架</button><button className={view === 'writer' ? 'active' : ''} disabled={busy || !active} onClick={() => setView('writer')}>写作空间</button><button className={view === 'characters' ? 'active' : ''} disabled={busy || !active} onClick={() => { setCharacterRevision(value => value + 1); setView('characters'); }}>角色库</button><button className={view === 'styles' ? 'active' : ''} disabled={busy} onClick={() => setView('styles')}>文风研习室</button></nav>
+      <div className="brand"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><path d="M12.5 27.5c-3.8-1-5.9-2.9-5.1-5.3 1-3 5.3-6.3 11-8.3 5.7-2.1 10.8-2.3 13.5-.6M27.5 12.5c3.8 1 5.9 2.9 5.1 5.3-1 3-5.3 6.3-11 8.3-5.7 2.1-10.8 2.3-13.5.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/><path d="M20 7.5c.8 6.6 3.4 9.2 10 10-6.6.8-9.2 3.4-10 10-.8-6.6-3.4-9.2-10-10 6.6-.8 9.2-3.4 10-10Z" fill="currentColor"/><circle cx="30" cy="27.5" r="1.5" fill="currentColor"/></svg></span><div>星序<small>starwriting</small><span className="app-version" data-testid="app-version">版本 {updateVersion || (versionUnavailable ? '不可用' : '读取中…')}</span></div></div>
+      <nav className="main-nav" aria-label="主要页面"><button className={view === 'shelf' ? 'active' : ''} disabled={busy} onClick={() => setView('shelf')}><NavIcon type="shelf" />我的书架</button><button className={view === 'writer' ? 'active' : ''} disabled={busy || !active} onClick={() => setView('writer')}><NavIcon type="writer" />写作空间</button><button className={view === 'characters' ? 'active' : ''} disabled={busy || !active} onClick={() => { setCharacterRevision(value => value + 1); setView('characters'); }}><NavIcon type="people" />角色库</button><button className={view === 'styles' ? 'active' : ''} disabled={busy} onClick={() => setView('styles')}><NavIcon type="style" />文风研习室</button></nav>
       <div className="project-heading">{activeBook?.value.title ?? active?.name ?? ''}</div>
+      <button className={`topbar-model ${view === 'ai-settings' ? 'active' : ''}`} onClick={() => setView('ai-settings')}><NavIcon type="model" />模型设置</button>
+      <details className="topbar-more" onKeyDown={event => { if (event.key === 'Escape' && event.currentTarget.open) { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }} onBlur={event => { if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onClick={event => { if (event.target instanceof Element && event.target.closest('button')) { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+      <summary>更多功能</summary><div className="topbar-more-panel" aria-label="更多功能">
       <button className={view === 'planning' ? 'active' : ''} disabled={!active || busy} onClick={() => setView('planning')}>创作筹备</button>
       <button disabled={!active || busy} onClick={() => setView('materials')}>资料转换</button>
       <button disabled={!active || busy} onClick={() => setView('detection')}>朱雀检测</button>
-      <button className={view === 'ai-settings' ? 'active' : ''} onClick={() => setView('ai-settings')}>模型设置</button>
       <button data-testid="usage-open" onClick={() => setUsageOpen(true)}>用量统计</button>
-      <button data-testid="update-open" disabled={exiting} onClick={() => { setUpdateOpen(true); void window.writer.updateVersion().then(setUpdateVersion).catch(() => setError('无法读取当前版本，请重启应用后重试')); }}>检查更新</button>
+      <button data-testid="update-open" disabled={exiting} onClick={() => { setUpdateOpen(true); void window.writer.updateVersion().then(version => { if (typeof version === 'string' && version.trim() && version.length <= 128) { setUpdateVersion(version); setVersionUnavailable(false); } else { setVersionUnavailable(true); } }).catch(() => { setVersionUnavailable(true); setError('无法读取当前版本，请重启应用后重试'); }); }}>检查更新</button>
       <button className={view === 'knowledge' ? 'active' : ''} disabled={!active || busy} onClick={() => setView('knowledge')}>知识检索</button>
+      </div></details>
       <button className="save-exit" disabled={busy || autoSaving || exiting || materialSyncBusy || mappingBusy || pluginBusy} onClick={() => void saveAndExit()}>保存并退出</button>
       <button className="primary" disabled={busy || autoSaving} onClick={() => {
         if (!discard()) return;

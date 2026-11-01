@@ -29,7 +29,7 @@ async function main() {
   const release = () => app.evaluate(() => { const state = globalThis as any; state.__confirmationHold = false; for (const resolve of state.__confirmationHeld.splice(0)) resolve(); });
   const waitHeld = async () => { const deadline = Date.now() + 5000; while (Date.now() < deadline) { if (await app.evaluate(() => (globalThis as any).__confirmationHeld.length)) return; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error('Preview reply was not held'); };
   const canonSearch = async (query: string) => {
-    await page.getByRole('button', { name: '知识检索', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click();
     await page.getByLabel('检索范围', { exact: true }).selectOption('canon');
     await page.getByRole('button', { name: '重新读取来源', exact: true }).click();
     await page.getByLabel('关键词', { exact: true }).fill(query);

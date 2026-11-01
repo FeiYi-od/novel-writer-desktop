@@ -3,7 +3,9 @@ import type { AIConnection, AIRequest, AITask, KnowledgeCitationReference, Knowl
 import { ReviewChanges } from './ReviewChanges';
 import { parseReview } from '../../core/review';
 import { mergeReportIssues } from '../../core/report-merge';
+import { ProviderBadge } from './ProviderBadge';
 import './knowledge.css';
+import './ai-writing-polish.css';
 const labels: Record<AITask['status'], string> = { running: '生成中', complete: '已完成', incomplete: '未完整结束', cancelled: '已取消', failed: '失败', interrupted: '上次运行中断' };
 const reviewLabels = { pending: '等待依次审稿', running: '审稿中', complete: '已完成', failed: '失败', skipped: '未执行', interrupted: '上次中断' };
 const autoReviews = (task: AITask) => task.autoReviews ?? (task.autoReview ? [task.autoReview] : []);
@@ -105,8 +107,11 @@ export function AIWriter({ projectId, title, manuscript, blocked, connections, o
       if (isCurrent(projectId)) setMessage(`已生成修订候选（${issueIds.length} 个问题）；原正文未改动，需你确认后再另存`);
     });
   };
-  const picker = (label: string, value: string, kind: 'writer' | 'reviewer' | 'reviser') => <label>{label}<select aria-label={label} value={value} disabled={busy || running} onChange={e => choose(kind, e.target.value)}><option value="">选择模型连接</option>{connections.map(c => <option key={c.id} value={c.id} disabled={kind === 'reviewer' && additionalReviewers.includes(c.id)}>{c.name} · {c.model}</option>)}</select></label>;
-  return <section className="ai-page"><header className="ai-heading"><div><small>WRITING & REVIEW</small><h1>AI 写作与审稿</h1><p>{title} · {manuscript?.path ?? '请先在写作空间打开章节'}</p></div><button onClick={onSettings}>配置模型连接</button></header>
+  const picker = (label: string, value: string, kind: 'writer' | 'reviewer' | 'reviser') => {
+    const selected = connections.find(c => c.id === value);
+    return <label><span className="model-picker-heading">{selected && <ProviderBadge baseUrl={selected.baseUrl} adapter={selected.adapter} />}{label}</span><select aria-label={label} value={value} disabled={busy || running} onChange={e => choose(kind, e.target.value)}><option value="">选择模型连接</option>{connections.map(c => <option key={c.id} value={c.id} disabled={kind === 'reviewer' && additionalReviewers.includes(c.id)}>{c.name} · {c.model}</option>)}</select></label>;
+  };
+  return <section className="ai-page ai-writing-page"><header className="ai-heading"><div><small>WRITING & REVIEW</small><h1>AI 写作与审稿</h1><p>{title} · {manuscript?.path ?? '请先在写作空间打开章节'}</p></div><button onClick={onSettings}>配置模型连接</button></header>
     {error && <div className="error" role="alert">{error}</div>}{message && <p role="status">{message}</p>}
     <div className="ai-columns"><aside className="ai-panel ai-form"><h2>本书工作流</h2>{picker('写作模型', writer, 'writer')}{picker('审稿模型', reviewer, 'reviewer')}{picker('修订模型', reviser, 'reviser')}
       <div className="ai-review-queue" aria-label="本书自动审稿模型队列">{additionalReviewers.map((id, index) => <div className="ai-review-slot" key={index}><label>追加审稿模型 {index + 2}<select aria-label={`追加审稿模型 ${index + 2}`} value={id} disabled={busy || running} onChange={e => chooseAdditional(additionalReviewers.map((value, position) => position === index ? e.target.value : value))}><option value="">选择模型连接</option>{connections.map(connection => <option key={connection.id} value={connection.id} disabled={connection.id === reviewer || additionalReviewers.some((value, position) => position !== index && value === connection.id)}>{connection.name} · {connection.model}</option>)}</select></label><button aria-label={`移除审稿模型 ${index + 2}`} disabled={busy || running} onClick={() => chooseAdditional(additionalReviewers.filter((_, position) => position !== index))}>移除</button></div>)}<button disabled={busy || running || additionalReviewers.length >= 2} onClick={() => chooseAdditional([...additionalReviewers, ''])}>添加审稿模型</button><p>最多三个不同连接，按上方顺序自动审稿。手动审稿使用第一项“审稿模型”。</p></div>

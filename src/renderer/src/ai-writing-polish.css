@@ -1,0 +1,32 @@
+/* Writing and review are frequent tasks: keep feedback immediate and the output readable. */
+.ai-writing-page { min-width: 0; color: #344e3a; }
+.ai-writing-page .ai-heading { gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.ai-writing-page .ai-heading > div { min-width: 0; }
+.ai-writing-page .ai-heading p { overflow-wrap: anywhere; line-height: 1.65; }
+.ai-writing-page .ai-columns { grid-template-columns: minmax(250px, 340px) minmax(0, 1fr); gap: 20px; }
+.ai-writing-page .ai-panel { border-color: #dce4d8; box-shadow: 0 4px 18px rgba(36, 57, 39, .045); }
+.ai-writing-page .ai-panel h2 { color: #304a36; font-weight: 600; }
+.ai-writing-page .ai-form label { color: #526b55; line-height: 1.6; }
+.ai-writing-page .ai-form select, .ai-writing-page .ai-form textarea { border-color: #d7e1d5; }
+.ai-writing-page .ai-review-queue, .ai-writing-page .ai-citation-selection { border-color: #dce5d8; background: #f8faf5; }
+.ai-writing-page .ai-result pre { border: 1px solid #e3e9de; background: #f7f9f4; overflow-wrap: anywhere; }
+.ai-writing-page .review-issue { border-color: #dce5d8; background: #fffefa; }
+.ai-writing-page .review-diff > div { min-width: 0; }
+.ai-writing-page .review-diff del, .ai-writing-page .review-diff ins { border-radius: 6px; }
+.ai-writing-page button:focus-visible, .ai-writing-page input:focus-visible,
+.ai-writing-page select:focus-visible, .ai-writing-page textarea:focus-visible,
+.ai-writing-page summary:focus-visible { outline: 2px solid #365741; outline-offset: 2px; }
+@media (max-width: 900px) {
+  .ai-writing-page { padding: 22px 18px 32px; }
+  .ai-writing-page .ai-columns { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .ai-writing-page .ai-panel { padding: 20px; }
+}
+@media (max-width: 520px) {
+  .ai-writing-page .review-diff { grid-template-columns: minmax(0, 1fr); }
+  .ai-writing-page .ai-review-slot { flex-wrap: wrap; }
+}
+@media (forced-colors: active) {
+  .ai-writing-page button:focus-visible, .ai-writing-page input:focus-visible,
+  .ai-writing-page select:focus-visible, .ai-writing-page textarea:focus-visible,
+  .ai-writing-page summary:focus-visible { outline-color: Highlight; }
+}

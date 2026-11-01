@@ -23,7 +23,7 @@ async function main() {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   const choose = (file: string) => app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, file);
   const openBook = async (folder: string) => { await choose(folder); await page.getByRole('button', { name: '＋ 打开小说文件夹', exact: true }).click(); await page.getByText(`已打开「${path.basename(folder)}」`, { exact: false }).waitFor(); };
-  const enterSearch = async () => { await page.getByRole('button', { name: '知识检索', exact: true }).click(); await page.getByLabel('关键词', { exact: true }).waitFor(); };
+  const enterSearch = async () => { await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click(); await page.getByLabel('关键词', { exact: true }).waitFor(); };
   const search = async (query: string, corpus: 'discussion' | 'canon' | 'style-reference' = 'discussion') => {
     await page.getByLabel('检索范围', { exact: true }).selectOption(corpus);
     await page.getByLabel('关键词', { exact: true }).fill(query);

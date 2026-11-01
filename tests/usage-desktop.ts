@@ -77,7 +77,7 @@ async function main() {
     assert.notEqual(texts[0], texts[1], '两版正文应不同');
     assert.equal(await dialog.locator('.trial-table tbody tr').count(), 2);
     await dialog.getByRole('button', { name: '关闭', exact: true }).click();
-    await page.getByTestId('usage-open').click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByTestId('usage-open').click();
     const usage = page.getByRole('dialog', { name: '用量统计' });
     await usage.waitFor();
     const summary = await usage.getByLabel('用量合计').innerText();

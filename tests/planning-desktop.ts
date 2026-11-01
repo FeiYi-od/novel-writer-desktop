@@ -32,7 +32,7 @@ async function main() {
     await page.getByRole('button', { name: '模型设置', exact: true }).click();
     await page.getByLabel('连接名称', { exact: true }).fill('筹备测试模型'); await page.getByLabel('API 基础地址', { exact: true }).fill(`http://127.0.0.1:${(server.address() as { port: number }).port}/v1`); await page.getByLabel('模型名称', { exact: true }).fill('mock');
     await page.getByRole('button', { name: '保存模型连接', exact: true }).click(); await page.getByText('模型连接已保存', { exact: true }).waitFor();
-    await page.getByRole('button', { name: '创作筹备', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '创作筹备', exact: true }).click();
     await page.getByLabel('筹备提示词').fill('请设计少年成长故事，主线必须围绕寻找失落车站。'); await page.getByLabel('筹备构想').fill('月光列车上的学生寻找姐姐。');
     await page.getByLabel('筹备模型').selectOption({ label: '筹备测试模型 · mock' }); await generate();
     let data = await page.evaluate(id => window.writer.readPlanning(id), projectId); assert.equal(data.value.outline, ''); assert.match(data.value.drafts.outline, /月光列车/);
@@ -56,9 +56,9 @@ async function main() {
     await page.setViewportSize({ width: 1000, height: 720 });
     await page.waitForFunction(() => window.innerWidth <= 1000);
     assert.equal(await page.locator('.topbar').evaluate(el => el.scrollWidth > el.clientWidth), false);
-    const other = path.join(fixture, '筹备小说乙'); await fs.mkdir(other); await choose(other); await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click(); await page.getByRole('button', { name: '创作筹备', exact: true }).click();
+    const other = path.join(fixture, '筹备小说乙'); await fs.mkdir(other); await choose(other); await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click(); await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '创作筹备', exact: true }).click();
     assert.equal(await page.getByLabel('筹备构想').inputValue(), ''); assert.equal(await page.getByLabel('筹备草稿').inputValue(), '');
-    await choose(folder); await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click(); await page.getByRole('button', { name: '创作筹备', exact: true }).click();
+    await choose(folder); await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click(); await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '创作筹备', exact: true }).click();
     await page.waitForFunction(() => (document.querySelector('[aria-label="筹备提示词"]') as HTMLTextAreaElement).value.includes('失落车站'));
     assert.deepEqual(errors, []); console.log('Planning desktop passed: custom prompts, outline/world/character generation and confirmation, review context, DOCX preservation, reload, book isolation, 1000px navigation.');
   } finally { await app.evaluate(({ app: instance }) => instance.exit(0)); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }

@@ -1,0 +1,26 @@
+/* An understated toolbar: frequent actions remain visible, other tools stay reachable. */
+.app-shell > .topbar { position: relative; z-index: 10; min-height: 76px; gap: 9px; padding: 10px 20px; background: #fafaf9; border-bottom: 1px solid #e3e3e1; }
+.topbar > .brand { width: auto; min-width: 174px; gap: 10px; color: #25262a; }
+.topbar .brand-icon { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(145deg, #edf1fc, #eeeaf8); color: #68749d; }
+.topbar .brand-icon svg { width: 32px; height: 32px; }
+.topbar .brand small { color: #78867b; letter-spacing: .08em; margin-top: 2px; }
+.topbar .app-version { color: #657568; }
+.topbar .main-nav { align-items: center; gap: 3px; }
+.topbar .main-nav button, .topbar .topbar-model { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; white-space: nowrap; font-size: 12px; }
+.topbar .main-nav button.active, .topbar .topbar-model.active { color: #24262b; background: #e9eaec; }
+.topbar-icon { width: 16px; height: 16px; flex: none; }
+.topbar > .project-heading { min-width: 0; max-width: 160px; color: #778378; font-size: 12px; }
+.topbar-more { position: relative; flex: none; }
+.topbar-more > summary { display: flex; align-items: center; justify-content: center; cursor: pointer; list-style: none; min-height: 36px; padding: 0 11px; border: 1px solid #dedfe1; border-radius: 8px; color: #414348; background: #fff; font-size: 12px; white-space: nowrap; }
+.topbar-more > summary::-webkit-details-marker { display: none; }
+.topbar-more > summary::after { content: '⌄'; margin-left: 7px; font-size: 13px; }
+.topbar-more[open] > summary { border-color: #a8aaaf; background: #f0f1f2; }
+.topbar-more-panel { position: absolute; right: 0; top: calc(100% + 7px); width: 168px; padding: 6px; border: 1px solid #e0e1e3; border-radius: 11px; background: #fff; box-shadow: 0 12px 30px rgba(34, 36, 40, .13); z-index: 1; }
+.topbar-more-panel button { display: block; width: 100%; padding: 9px 10px; border: 0; text-align: left; background: transparent; color: #393b40; font-size: 12px; }
+.topbar-more-panel button.active { background: #ececee; }
+@media (hover: hover) and (pointer: fine) { .topbar-more-panel button:not(:disabled):hover { background: #f1f1f2; } }
+.topbar-more > summary:focus-visible, .topbar-more-panel button:focus-visible, .topbar .main-nav button:focus-visible, .topbar .topbar-model:focus-visible { outline: 2px solid #365741; outline-offset: 2px; }
+.topbar > .save-exit { border-color: #b42318; color: #b42318; }
+@media (max-width: 1150px) { .app-shell > .topbar { padding: 10px 16px; gap: 5px; } .topbar > .brand { min-width: 145px; } .topbar > .project-heading { flex: 0 1 65px; max-width: 65px; } .topbar .main-nav button { padding: 8px 6px; } .topbar > button { padding: 8px 6px; } }
+@media (max-width: 700px) { .topbar-more-panel { right: auto; left: 0; } }
+@media (forced-colors: active) { .topbar-more > summary:focus-visible, .topbar-more-panel button:focus-visible, .topbar .main-nav button:focus-visible, .topbar .topbar-model:focus-visible { outline-color: Highlight; } }

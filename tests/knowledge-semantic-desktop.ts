@@ -42,7 +42,7 @@ async function main() {
     }, endpoint);
     assert.ok(saved.connections.some(connection => connection.kind === 'embedding'));
 
-    await page.getByRole('button', { name: '知识检索', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click();
     await page.getByLabel('检索方式', { exact: true }).selectOption('semantic');
     await page.locator('.knowledge-index summary').click();
     await page.getByRole('button', { name: '刷新嵌入连接', exact: true }).click();
@@ -67,7 +67,7 @@ async function main() {
     await page.locator('.tiptap').fill('林夏推开月门，月钥在谷仓，雨声渐起。');
     await page.getByRole('button', { name: '保存 DOCX', exact: true }).click();
     await page.getByText('DOCX 已保存到所选文件夹', { exact: true }).waitFor();
-    await page.getByRole('button', { name: '知识检索', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click();
     await page.locator('.knowledge-index').evaluate((element: HTMLDetailsElement) => { element.open = true; });
     await page.getByRole('button', { name: '重建索引', exact: true }).click();
     await page.getByRole('status').filter({ hasText: '索引已更新' }).waitFor();

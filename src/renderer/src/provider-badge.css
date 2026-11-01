@@ -1,0 +1,12 @@
+.provider-badge { display:inline-flex; align-items:center; justify-content:center; flex:none; width:30px; height:30px; border-radius:10px; background:#edf2eb; color:#365741; font:700 12px/1 system-ui,sans-serif; letter-spacing:-.02em; }
+.provider-openai { background:#e5f1ed; color:#245b4a; }
+.provider-gemini { background:#e8edfc; color:#3e59ad; }
+.provider-deepseek { background:#e8f1ff; color:#305da9; }
+.provider-qwen { background:#f0eafb; color:#6752a0; }
+.provider-claude { background:#f9eee6; color:#925c42; }
+.provider-ollama { background:#e9eee9; color:#3c5244; }
+.model-settings-page .provider-entry { display:flex; align-items:center; gap:10px; min-width:0; }
+.model-settings-page .provider-entry-text { min-width:0; overflow-wrap:anywhere; }
+.model-settings-page .provider-heading { display:flex; align-items:center; gap:10px; }
+.model-picker-heading { display:flex; align-items:center; gap:8px; min-height:30px; }
+@media (forced-colors: active) { .provider-badge { border:1px solid CanvasText; color:CanvasText; background:Canvas; } }

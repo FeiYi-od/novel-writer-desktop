@@ -19,16 +19,22 @@ asar: true
 extraResources:
   - from: scripts/protect-upgrade-materials.ps1
     to: protect-upgrade-materials.ps1
+  - from: assets/app-icon.png
+    to: app-icon.png
 win:
-  # Keep electron-builder from editing/signing the PE: no certificate is available here and the
-  # edit step would make later ACL/asar comparisons ambiguous.
-  signAndEditExecutable: false
+  # Keep the established executable name and app identity for existing installs.
+  # Edit PE resources for the icon, but do not attempt code signing.
+  signAndEditExecutable: true
+  signExecutable: false
+  icon: assets/app-icon.ico
   target:
     - target: nsis
       arch: [x64]
   artifactName: ${productName}-${version}-${arch}.${ext}
 nsis:
   include: scripts/installer-materials.nsh
+  installerIcon: assets/app-icon.ico
+  uninstallerIcon: assets/app-icon.ico
   oneClick: false
   perMachine: false
   allowElevation: false

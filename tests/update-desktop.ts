@@ -25,6 +25,16 @@ async function main() {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
+    await page.getByTestId('app-version').waitFor();
+    await page.waitForFunction(version => document.querySelector('[data-testid="app-version"]')?.textContent?.includes(version), expectedVersion);
+    assert.equal((await page.getByTestId('app-version').innerText()).trim(), `版本 ${expectedVersion}`, '首页应显示实际应用版本');
+    await page.setViewportSize({ width: 1000, height: 720 });
+    await page.getByText('更多功能', { exact: true }).click();
+    const versionBox = await page.getByTestId('app-version').boundingBox();
+    const updateBox = await page.getByTestId('update-open').boundingBox();
+    assert.ok(versionBox && updateBox && versionBox.width > 0 && versionBox.height > 0, '窄窗口仍需显示版本和更新入口');
+    assert.ok(versionBox.x + versionBox.width <= updateBox.x || updateBox.x + updateBox.width <= versionBox.x || versionBox.y + versionBox.height <= updateBox.y || updateBox.y + updateBox.height <= versionBox.y, '版本标识不得遮挡更新入口');
+    await page.getByText('更多功能', { exact: true }).click();
     if (archive) {
       const identity = await app.evaluate(({ app: instance }) => ({ packaged: instance.isPackaged, path: instance.getAppPath(), version: instance.getVersion() }));
       assert.equal(identity.packaged, true, '必须执行实际打包版');
@@ -47,7 +57,7 @@ async function main() {
       ipcMain.handle('update:open-page', () => { (globalThis as any).__updateDesktop.opened++; });
     }, expectedVersion);
     const panel = page.getByTestId('update-panel');
-    const open = async () => { await page.getByTestId('update-open').click(); await panel.waitFor(); };
+    const open = async () => { await page.getByText('更多功能', { exact: true }).click(); await page.getByTestId('update-open').click(); await panel.waitFor(); };
     const close = async () => { await panel.getByRole('button', { name: '关闭', exact: true }).click(); await panel.waitFor({ state: 'detached' }); };
     await open();
     await page.waitForFunction(() => {

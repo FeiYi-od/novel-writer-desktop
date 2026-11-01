@@ -31,7 +31,7 @@ async function main() {
   const choose = (folder: string) => app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, folder);
   const open = async (folder: string) => { await choose(folder); await page.getByRole('button', { name: '＋ 打开小说文件夹', exact: true }).click(); await page.getByText(`已打开「${path.basename(folder)}」`, { exact: false }).waitFor(); };
   const search = async (query: string, corpus: 'canon' | 'discussion' = 'canon') => {
-    await page.getByRole('button', { name: '知识检索', exact: true }).click(); await page.getByLabel('检索范围', { exact: true }).selectOption(corpus);
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click(); await page.getByLabel('检索范围', { exact: true }).selectOption(corpus);
     await page.getByRole('button', { name: '重新读取来源', exact: true }).click(); await page.getByLabel('最多结果', { exact: true }).selectOption('20');
     await page.getByLabel('关键词', { exact: true }).fill(query); await page.getByRole('button', { name: '检索本书', exact: true }).click();
     await page.getByRole('status').filter({ hasText: '检索完成' }).waitFor();
@@ -66,7 +66,7 @@ async function main() {
     assert.equal(await checks.evaluateAll(elements => elements.filter(element => (element as HTMLInputElement).checked).length), 10);
     for (let i = 1; i < 10; i++) await checks.nth(i).uncheck();
     await page.getByRole('button', { name: '写作空间', exact: true }).click();
-    await page.getByRole('button', { name: '知识检索', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click();
     assert.equal(await checks.first().isChecked(), true, 'A parent view render must preserve untransferred local selection');
     await page.getByRole('button', { name: '用于本书写作与审稿', exact: true }).click();
     assert.match(await page.locator('.ai-citation-selection').textContent() ?? '', /银叶|作者确认版本/); assert.equal(calls.length, 0, 'Selecting citations must not call a model');

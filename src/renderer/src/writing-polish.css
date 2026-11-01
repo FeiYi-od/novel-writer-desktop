@@ -1,0 +1,49 @@
+/* A quiet writing surface with visible, immediate keyboard feedback. */
+.workspace {
+  gap: 8px;
+  padding: 8px;
+  background: #f0f1eb;
+}
+.workspace .sidebar,
+.workspace .inspector,
+.workspace .editor-area {
+  min-width: 0;
+  border: 1px solid #e0e4da;
+  border-radius: 10px;
+  background: #fafaf6;
+}
+.workspace .editor-area { overflow: hidden; background: #fffefa; }
+.workspace .sidebar { background: #f8f9f3; }
+.workspace .section-label { color: #607563; font-weight: 600; }
+.workspace .chapter-list button.current {
+  background: #e6eee3;
+  color: #2f533a;
+  box-shadow: inset 3px 0 #466d50;
+}
+.workspace .paper-scroll { background: #f8f9f5; }
+.workspace .toolbar { border-top-color: #e8ebe4; border-bottom-color: #e8ebe4; }
+.workspace .inspector-heading h2 { color: #304a36; }
+.editor-area .document-header { align-items: flex-start; row-gap: 12px; flex-wrap: wrap; }
+.editor-area .document-header > div:first-child { flex: 1 1 150px; }
+.editor-area .document-header h1 { max-width: 100%; }
+.editor-area .document-header .actions { flex-wrap: wrap; justify-content: flex-end; }
+.editor-area .toolbar button:focus-visible,
+.editor-area .tiptap:focus-visible { outline: 2px solid #365741; outline-offset: 3px; }
+.editor-area .paper { border-color: #dedfd5; box-shadow: 0 4px 20px rgba(38, 51, 38, .06); }
+.editor-area .editor-footer { color: #626e5f; flex-wrap: wrap; }
+.workspace .sidebar button:focus-visible,
+.workspace .inspector button:focus-visible { outline: 2px solid #365741; outline-offset: 2px; }
+.workspace .inspector { min-width: 0; overflow-y: auto; }
+
+@media (max-width: 1150px) {
+  .editor-area .document-header .actions { justify-content: flex-start; }
+  .editor-area .paper-scroll { padding: 18px 18px 36px; }
+  .editor-area .toolbar { margin-inline: 18px; }
+  .editor-area .toolbar-note { margin-left: 0; }
+}
+@media (forced-colors: active) {
+  .editor-area .toolbar button:focus-visible,
+  .editor-area .tiptap:focus-visible,
+  .workspace .sidebar button:focus-visible,
+  .workspace .inspector button:focus-visible { outline-color: Highlight; }
+}

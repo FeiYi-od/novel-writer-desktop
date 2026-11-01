@@ -25,7 +25,7 @@ async function main() {
           { type: 'paragraph', content: [{ type: 'text', text: '月钥开启北门，只有真正的主人才能转动。' }] }
         ] } });
     });
-    await page.getByRole('button', { name: '知识检索', exact: true }).click();
+    await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '知识检索', exact: true }).click();
     await page.getByLabel('关键词', { exact: true }).fill('月钥');
     await page.getByRole('button', { name: '重新读取来源' }).click();
     const source = page.locator('.knowledge-sources label').filter({ hasText: '.docx' }).first();

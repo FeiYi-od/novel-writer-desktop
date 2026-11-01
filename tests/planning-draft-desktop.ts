@@ -16,7 +16,7 @@ async function main() {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, folder);
     return { app, page };
   };
-  const openBook = async () => { await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click(); await page.getByRole('button', { name: '创作筹备', exact: true }).click(); await page.getByLabel('筹备构想').waitFor(); };
+  const openBook = async () => { await page.getByRole('button', { name: '＋ 打开小说文件夹' }).click(); await page.getByText('更多功能', { exact: true }).click(); await page.getByRole('button', { name: '创作筹备', exact: true }).click(); await page.getByLabel('筹备构想').waitFor(); };
   let page: import('playwright').Page; let app: Awaited<ReturnType<typeof launch>>['app'];
   ({ app, page } = await launch());
   try {
