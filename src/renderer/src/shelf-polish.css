@@ -15,6 +15,9 @@
 .library-page .card-details p { overflow-wrap: anywhere; color: #5d6b61; line-height: 1.75; }
 .library-page .card-meta { color: #66746a; font-size: 11px; letter-spacing: .03em; }
 .library-page .card-actions button { font-size: 12px; min-height: 36px; }
+.library-page .card-actions { flex-wrap: wrap; }
+.library-page .card-actions .shelf-remove { color: #a43c38; border-color: #e6c9c5; }
+.library-page .card-actions .shelf-remove:disabled { color: #9d8f8d; border-color: #e4dddc; }
 .library-page .card-actions .primary { background: #303735; border-color: #303735; color: #fff; }
 .library-page .card-actions .primary:hover:not(:disabled) { background: #171c1a; }
 .library-page input:focus-visible, .library-page button:focus-visible { outline: 2px solid #394841; outline-offset: 3px; }

@@ -131,6 +131,77 @@ export class Workspace {
     });
   }
 
+  /** Forget this local bookshelf entry only. Novel files and material stores are untouched. */
+  detach(projectId: string): Promise<void> {
+    return this.serial(async () => {
+      const project = this.project(z.uuid().parse(projectId));
+      const directory = path.resolve(this.localData);
+      const index = path.join(directory, 'library.json');
+      const initialDirectory = await fs.lstat(directory);
+      if (!initialDirectory.isDirectory() || initialDirectory.isSymbolicLink()) throw new Error('书库索引目录不安全，未移除小说');
+      const realDirectory = await fs.realpath(directory);
+      const initialFile = await fs.lstat(index);
+      if (!initialFile.isFile() || initialFile.isSymbolicLink() || initialFile.nlink !== 1) throw new Error('书库索引文件不安全，未移除小说');
+      const original = await fs.readFile(index);
+      let roots: string[];
+      try {
+        roots = z.array(z.string()).parse(JSON.parse(original.toString('utf8')));
+        if (roots.some(root => !path.isAbsolute(root))) throw new Error('relative root');
+      } catch { throw new Error('书库索引损坏，未移除小说'); }
+      const sameRoot = (root: string) => path.relative(project.root, path.resolve(root)) === '';
+      if (!roots.some(sameRoot)) throw new Error('书库索引已变化，未移除小说');
+      const unchanged = async () => {
+        const currentDirectory = await fs.lstat(directory), before = await fs.lstat(index);
+        if (!currentDirectory.isDirectory() || currentDirectory.isSymbolicLink()
+          || currentDirectory.dev !== initialDirectory.dev || currentDirectory.ino !== initialDirectory.ino
+          || await fs.realpath(directory) !== realDirectory
+          || !before.isFile() || before.isSymbolicLink() || before.nlink !== 1
+          || before.dev !== initialFile.dev || before.ino !== initialFile.ino
+          || before.size !== initialFile.size || before.mtimeMs !== initialFile.mtimeMs || before.ctimeMs !== initialFile.ctimeMs)
+          throw new Error('书库索引已变化，未移除小说');
+        const current = await fs.readFile(index), after = await fs.lstat(index);
+        if (digest(current) !== digest(original) || after.dev !== before.dev || after.ino !== before.ino
+          || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs)
+          throw new Error('书库索引已变化，未移除小说');
+      };
+      const temp = `${index}.${randomUUID()}.tmp`;
+      const resultBytes = Buffer.from(JSON.stringify(roots.filter(root => !sameRoot(root)), null, 2), 'utf8');
+      let staged: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+      let cleanupAllowed = false;
+      try {
+        await fs.writeFile(temp, resultBytes, { flag: 'wx' });
+        staged = await fs.lstat(temp);
+        if (!staged.isFile() || staged.isSymbolicLink() || staged.nlink !== 1) throw new Error('书库暂存文件不安全，未移除小说');
+        await unchanged();
+        const currentTemp = await fs.lstat(temp);
+        if (!currentTemp.isFile() || currentTemp.isSymbolicLink() || currentTemp.nlink !== 1
+          || currentTemp.dev !== staged.dev || currentTemp.ino !== staged.ino
+          || currentTemp.size !== staged.size || currentTemp.mtimeMs !== staged.mtimeMs || currentTemp.ctimeMs !== staged.ctimeMs)
+          throw new Error('书库暂存文件已变化，未移除小说');
+        const stagedBytes = await fs.readFile(temp), afterRead = await fs.lstat(temp);
+        if (digest(stagedBytes) !== digest(resultBytes) || afterRead.dev !== currentTemp.dev || afterRead.ino !== currentTemp.ino
+          || afterRead.size !== currentTemp.size || afterRead.mtimeMs !== currentTemp.mtimeMs || afterRead.ctimeMs !== currentTemp.ctimeMs)
+          throw new Error('书库暂存文件已变化，未移除小说');
+        cleanupAllowed = true;
+        await unchanged();
+        await fs.rename(temp, index);
+      } finally {
+        // Never unlink a replacement in a directory switched by another process.
+        if (staged && cleanupAllowed) {
+          try {
+            const currentDirectory = await fs.lstat(directory), currentTemp = await fs.lstat(temp);
+            if (currentDirectory.isDirectory() && !currentDirectory.isSymbolicLink()
+              && currentDirectory.dev === initialDirectory.dev && currentDirectory.ino === initialDirectory.ino
+              && await fs.realpath(directory) === realDirectory && currentTemp.isFile() && !currentTemp.isSymbolicLink()
+              && currentTemp.dev === staged.dev && currentTemp.ino === staged.ino && currentTemp.size === staged.size
+              && currentTemp.mtimeMs === staged.mtimeMs && currentTemp.ctimeMs === staged.ctimeMs) await fs.unlink(temp);
+          } catch { /* Preserve unexpected or inaccessible temporary files for inspection. */ }
+        }
+      }
+      this.projects.delete(projectId);
+    });
+  }
+
   private async chapterFile(id: string, relative: string) {
     const project = this.project(id);
     relative = await this.resolveChapterPath(id, relative);

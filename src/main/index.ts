@@ -523,6 +523,10 @@ async function bootstrap() {
       const result = await dialog.showOpenDialog(window!, { title: '选择一本小说的独立文件夹', properties: ['openDirectory', 'createDirectory'] });
       return result.canceled ? null : workspace.attach(result.filePaths[0]);
     },
+    'projects:remove': async (projectId: string) => {
+      await workspace.detach(projectId);
+      chapterWatcher.unwatch(projectId);
+    },
     'chapters:list': async (id: string) => (await chapterOrder.read(id)).entries.filter(entry => entry.present).map(({ path, name }) => ({ path, name })),
     'chapters:order': (id: string) => chapterOrder.read(id),
     'chapters:save-order': (id: string, paths: string[], hash: string) => chapterOrder.save(id, paths, hash),
@@ -683,6 +687,9 @@ async function bootstrap() {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
       if (exitToken && channel === 'plugin:inspect') throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && channel === 'projects:remove') throw new Error('正在保存退出，请稍后移除书架作品');
+      if (channel === 'projects:remove' && (activeRequests > 0 || materialGate.exclusivePending || ai.hasPendingWork()))
+        throw new Error('模型任务或文件操作尚未完成，请等待或停止后再移除书架作品');
       if (exitToken && channel === 'tag-mapping:save') throw new Error('正在保存退出，请稍后操作');
       if (exitToken && channel === 'materials-sync:history-retain') throw new Error('正在保存退出，请稍后操作');
       if (exitToken && channel === 'materials-sync:history-restore') throw new Error('正在保存退出，请稍后操作');
@@ -695,6 +702,13 @@ async function bootstrap() {
         if (channel.startsWith('app:')) return await handler(...args);
         // Network checks do not touch book files and must not hold the material gate.
         if (channel.startsWith('update:')) return await handler(...args);
+        if (channel === 'projects:remove') {
+          // Wait for file work already in flight; model tasks can outlive their starting IPC.
+          return await materialGate.exclusive(() => {
+            if (exitToken || ai.hasPendingWork()) throw new Error('模型任务或保存退出仍在进行，请完成或停止后再移除书架作品');
+            return handler(...args);
+          });
+        }
         // Preview reserves its cancellation session before entering the shared gate.
         // Cancellation only aborts that in-memory session and must bypass queued swaps.
         if (channel === 'macros:preview' || channel === 'macros:cancel-preview') return await handler(...args);

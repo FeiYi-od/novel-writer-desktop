@@ -68,6 +68,9 @@ const placeholders: Record<NoteKind, string> = {
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [books, setBooks] = useState<Record<string, BookSnapshot>>({});
+  const removedProjects = useRef(new Set<string>());
+  const [shelfMessage, setShelfMessage] = useState('');
+  const [shelfLoading, setShelfLoading] = useState(true);
   const [view, setView] = useState<'shelf' | 'writer' | 'styles' | 'characters' | 'ai-settings' | 'ai-writer' | 'materials' | 'detection' | 'planning' | 'memories' | 'recovery' | 'knowledge' | 'confirmations'>('shelf');
   const [connections, setConnections] = useState<AIConnection[]>([]);
   const [aiSettingsDirty, setAISettingsDirty] = useState(false);
@@ -174,7 +177,9 @@ export function App() {
     try { await action(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { pending.current = false; setBusy(false); }
   }, []);
-  const updateBook = useCallback((next: BookSnapshot) => setBooks(current => ({ ...current, [next.value.projectId]: next })), []);
+  const updateBook = useCallback((next: BookSnapshot) => {
+    if (!removedProjects.current.has(next.value.projectId)) setBooks(current => ({ ...current, [next.value.projectId]: next }));
+  }, []);
   const setCitations = useCallback((projectId: string, hits: KnowledgeSearchHit[]) => {
     if (activeIdRef.current !== projectId) return;
     if (hits.length > 10 || hits.some(hit => hit.projectId !== projectId || hit.corpus !== 'canon' || !hit.confirmed)
@@ -195,7 +200,7 @@ export function App() {
       return window.writer.readBook(p.id);
     }));
     for (const result of results) { if (result.status === 'fulfilled') updateBook(result.value); else setError(String(result.reason)); }
-  }).catch(e => setError(String(e))); }, [updateBook]);
+  }).catch(e => setError(String(e))).finally(() => setShelfLoading(false)); }, [updateBook]);
   useEffect(() => {
     const prevent = (event: BeforeUnloadEvent) => { if (dirty || notesDirty || auxDirty || charactersDirty || aiSettingsDirty || materialsDirty || detectionDirty || planningDirty || memoryDirty || knowledgeBusy || confirmationBusy || orderDirty || fidelityDirty || busy || autoSaving || materialSyncBusy || mappingDirty || mappingBusy || pluginBusy) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', prevent);
@@ -222,11 +227,43 @@ export function App() {
       if (sync.status !== 'clean' && sync.status !== 'disabled') syncProblem = sync.message;
     } catch (e) { syncProblem = e instanceof Error ? e.message : String(e); }
     const [files, projectNotes, book] = await Promise.all([window.writer.chapters(project.id), window.writer.readNotes(project.id), window.writer.readBook(project.id)]);
+    activeIdRef.current = project.id;
     setOrderProject(null); setCitationSelection(null); setActive(project); setChapters(files); setNotes(projectNotes); setNotesDirty(false); loadDocument(null);
     updateBook(book); setVolume(''); setNewFormat('docx'); setView('writer'); setAuxDirty(false);
     setMessage(`已打开「${project.name}」· ${files.length} 个正文文件（DOCX / TXT）`);
     if (syncProblem) { setError(`固定资料尚未同步：${syncProblem}`); setMaterialSyncProject(project.id); }
-    void window.writer.listSyncConflicts(project.id).then(setSyncConflicts).catch(() => setSyncConflicts([]));
+    void window.writer.listSyncConflicts(project.id).then(items => { if (activeIdRef.current === project.id) setSyncConflicts(items); })
+      .catch(() => { if (activeIdRef.current === project.id) setSyncConflicts([]); });
+  }
+  async function removeBook(project: Project) {
+    if (pending.current || busy || autoSaving || exiting || shelfLoading) return;
+    setError(''); setShelfMessage('');
+    try {
+      if (dirty || notesDirty || auxDirty || charactersDirty || aiSettingsDirty || materialsDirty || detectionDirty || planningDirty || memoryDirty
+        || knowledgeBusy || confirmationBusy || orderDirty || fidelityDirty || materialSyncBusy || mappingDirty || mappingBusy || pluginBusy || renameTarget)
+        throw new Error('请先保存正文和各页资料、完成当前操作，再从书架移除作品；未保存内容已保留。');
+      exitSaves.assertClean(undefined, '移除书架作品');
+      const id = project.id, title = books[id]?.value.title ?? project.name;
+      if (!window.confirm(`将「${title}」从书架移除？\n\n只取消本机书架关联，小说正文、封面、人物卡、世界观和恢复草稿全部保留。之后可通过“打开小说文件夹”重新加入。`)) return;
+      await run(async () => {
+        await window.writer.removeProject(id);
+        removedProjects.current.add(id);
+        setProjects(current => current.filter(item => item.id !== id));
+        setBooks(current => { const next = { ...current }; delete next[id]; return next; });
+        if (activeIdRef.current === id) {
+          activeIdRef.current = undefined; setActive(null); loadDocument(null);
+          setNotes(null); setNotesDirty(false); setChapters([]); setVolume(''); setNewFormat('docx');
+          setCitationSelection(null); setSyncConflicts([]); setExternalPaths([]); setCapability(null); setJump(null); setFillInstruction(null);
+          setOrderProject(null); setReplaceProject(null); setTimelineOpen(null); setRelationsOpen(null); setPromptsOpen(null);
+          setTrialOpen(null); setSceneOpen(false); setStyleHistoryOpen(null); setWorldOpen(null); setMacroOpen(null);
+          setDiscussionOpen(null); setBlueprintOpen(null); setStatesOpen(null); setMaterialSyncProject(null); setConflictOpen(false);
+          setAuxDirty(false); setCharactersDirty(false); setMaterialsDirty(false); setPlanningDirty(false); setMemoryDirty(false); setDetectionDirty(false);
+          setOrderDirty(false); setMappingDirty(false); setView('shelf');
+          setMessage('选择小说文件夹，开始写作');
+        }
+        setShelfMessage(`已将「${title}」从书架移除，原文件与创作资料已保留。`);
+      });
+    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
   }
   async function refreshMaterials(snapshot: MaterialSyncSnapshot) {
     const id = snapshot.projectId;
@@ -450,7 +487,7 @@ export function App() {
       <button className="save-exit" disabled={busy || autoSaving || exiting || materialSyncBusy || mappingBusy || pluginBusy} onClick={() => void saveAndExit()}>保存并退出</button>
       <button className="primary" disabled={busy || autoSaving} onClick={() => {
         if (!discard()) return;
-        void run(async () => { const p = await window.writer.openProject(); if (p) { setProjects(await window.writer.listProjects()); await selectProject(p); } });
+        void run(async () => { const p = await window.writer.openProject(); if (p) { removedProjects.current.delete(p.id); setShelfMessage(''); setProjects(await window.writer.listProjects()); await selectProject(p); } });
       }}>＋ 打开小说文件夹</button>
     </header>
     {view !== 'writer' && error && <div role="alert" className="error">{error}<button onClick={() => setError('')}>关闭</button></div>}
@@ -474,7 +511,7 @@ export function App() {
     <div className="full-view" hidden={view !== 'materials'}>{active && <Materials key={`${active.id}:${materialRevision}`} projectId={active.id} connections={connections} blocked={dirty || notesDirty || auxDirty || charactersDirty || busy} onDirty={setMaterialsDirty} onSaved={async id => { const next = await window.writer.readNotes(id); if (activeIdRef.current === id) { setNotes(next); setNotesDirty(false); setCharacterRevision(value => value + 1); } }} />}</div>
     <div className="full-view" hidden={view !== 'detection'}>{active && <Detection key={`${active.id}:${materialRevision}`} projectId={active.id} manuscript={document} blocked={dirty || notesDirty || busy} visible={view === 'detection'} onDirty={setDetectionDirty} onOpenSettings={() => setView('ai-settings')} />}</div>
     <div className="full-view" hidden={view !== 'ai-writer'}>{active && <AIWriter key={`${active.id}:${materialRevision}`} projectId={active.id} title={activeBook?.value.title ?? active.name} manuscript={document} blocked={dirty || notesDirty || auxDirty || charactersDirty || busy} connections={connections} onSettings={() => setView('ai-settings')} citationHits={citationSelection?.projectId === active.id ? citationSelection.hits : []} onClearCitations={() => setCitations(active.id, [])} onKnowledge={() => setView('knowledge')} fill={fillInstruction} onExport={async id => { const files = await window.writer.chapters(id); if (activeIdRef.current === id) setChapters(files); }} />}</div>
-    <div className="full-view" hidden={view !== 'shelf'}><Shelf projects={projects} books={books} busy={busy} onOpen={openBook} onSave={persistBook} /></div>
+    <div className="full-view" hidden={view !== 'shelf'}>{shelfMessage && <div className="notice" role="status" data-testid="shelf-removal-notice">{shelfMessage}<button onClick={() => setShelfMessage('')}>知道了</button></div>}<Shelf projects={projects} books={books} busy={busy || autoSaving || exiting || shelfLoading} onOpen={openBook} onSave={persistBook} onRemove={removeBook} /></div>
     <div className="full-view" hidden={view !== 'characters'}>{active && <Characters key={`${active.id}:${characterRevision}`} projectId={active.id} title={activeBook?.value.title ?? active.name} legacyNotes={notes?.value.characters ?? ''} onDirty={setCharactersDirty} />}</div>
     <div className="full-view" hidden={view !== 'styles'}>{activeBook ? <StyleStudio key={`${activeBook.value.projectId}:${materialRevision}`} snapshot={activeBook} connections={connections} legacyNotes={notes?.value.style ?? ''} onUpdate={updateBook} onSave={persistBook} onDirty={setAuxDirty} /> : <div className="empty-library"><h1>文风研习室</h1><p>先在书架打开一本小说，再为它导入参考文本、建立不同的文风档案。</p><button onClick={() => setView('shelf')}>前往书架</button></div>}</div>
     <div className="workspace" style={{ display: view === 'writer' ? undefined : 'none' }}>

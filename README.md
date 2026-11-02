@@ -2,11 +2,11 @@
 
 Windows DOCX 小说写作工作台，支持多作品隔离、模型辅助写作、审稿和人物/世界观资料。
 
-[下载安装包](https://github.com/FeiYi-od/novel-writer-desktop/releases) · [本版变化](docs/RELEASE_NOTES_BETA17.md) · [验收与升级](docs/BETA17_ACCEPTANCE.md)
+[下载安装包](https://github.com/FeiYi-od/novel-writer-desktop/releases) · [本版变化](docs/RELEASE_NOTES_BETA18.md) · [验收与升级](docs/BETA18_ACCEPTANCE.md)
 
 普通使用下载同版 starwriting Windows x64 安装包，无需安装开发环境。源码 ZIP 用于开发；同页 SHA256SUMS.txt 提供完整性校验。
 
-当前测试版本：0.1.1-beta.17。默认宋体五号、段首两个真实全角空格；正文默认 DOCX，创作资料固定保存 Markdown。
+当前测试版本：0.1.1-beta.18。默认宋体五号、段首两个真实全角空格；正文默认 DOCX，创作资料固定保存 Markdown。
 
 安装包不包含任何作者的 NAS 地址、账号、API 密钥或小说。模型连接由使用者分别配置。
 

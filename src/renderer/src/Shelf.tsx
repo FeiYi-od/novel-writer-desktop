@@ -9,10 +9,11 @@ export function BookCover({ title, src, small = false }: { title: string; src?: 
   </div>;
 }
 
-export function Shelf({ projects, books, busy, onOpen, onSave }: {
+export function Shelf({ projects, books, busy, onOpen, onSave, onRemove }: {
   projects: Project[]; books: Record<string, BookSnapshot>; busy: boolean;
   onOpen: (project: Project) => void;
   onSave: (id: string, value: BookDetails, hash: string) => Promise<BookSnapshot>;
+  onRemove: (project: Project) => Promise<void>;
 }) {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Project | null>(null);
@@ -24,7 +25,7 @@ export function Shelf({ projects, books, busy, onOpen, onSave }: {
       const book = books[project.id]; const title = book?.value.title ?? project.name;
       return <article className="shelf-card" key={project.id}>
         <button className="cover-button" disabled={busy} aria-label={`打开作品 ${title}`} onClick={() => onOpen(project)}><BookCover title={title} src={book?.covers[book.value.cover]} /></button>
-        <div className="card-details"><div className="card-meta">{book?.value.volumes.length ?? 0} 个分集</div><h2 title={title}>{title}</h2><p>{book?.value.introduction || '为这部小说写一段引言，让故事从这里开始。'}</p><div className="card-actions"><button className="primary" disabled={busy} onClick={() => onOpen(project)}>进入创作 →</button><button disabled={busy || !book} aria-label={`编辑作品 ${title}`} onClick={() => setEditing(project)}>封面与分集</button></div></div>
+        <div className="card-details"><div className="card-meta">{book?.value.volumes.length ?? 0} 个分集</div><h2 title={title}>{title}</h2><p>{book?.value.introduction || '为这部小说写一段引言，让故事从这里开始。'}</p><div className="card-actions"><button className="primary" disabled={busy} onClick={() => onOpen(project)}>进入创作 →</button><button disabled={busy || !book} aria-label={`编辑作品 ${title}`} onClick={() => setEditing(project)}>封面与分集</button><button className="shelf-remove" disabled={busy || !!editing} aria-label={`从书架移除 ${title}`} title="移除仅取消书架关联，原文件保留" onClick={() => void onRemove(project)}>移除</button></div></div>
       </article>;
     })}</div>
     {!filtered.length && <div className="empty-library" role="status"><b>{projects.length ? '没有找到这部作品' : '你的下一部小说，从这里开始'}</b><p>{projects.length ? '试试其他作品名称，或清除搜索条件。' : '点击右上角“打开小说文件夹”，将已有作品加入书架。'}</p>{projects.length > 0 && <button onClick={() => setSearch('')}>清除搜索</button>}</div>}

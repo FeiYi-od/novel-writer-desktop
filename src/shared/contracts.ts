@@ -191,6 +191,8 @@ export interface WriterApi {
   copyText(text: string): Promise<void>;
   listProjects(): Promise<Project[]>;
   openProject(): Promise<Project | null>;
+  /** Removes only this device's bookshelf association; all author files remain. */
+  removeProject(projectId: string): Promise<void>;
   chapters(projectId: string): Promise<Chapter[]>;
   chapterOrder(projectId: string): Promise<ChapterOrderSnapshot>;
   saveChapterOrder(projectId: string, paths: string[], expectedHash: string): Promise<ChapterOrderSnapshot>;

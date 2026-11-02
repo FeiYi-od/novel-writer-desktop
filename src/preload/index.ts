@@ -128,6 +128,7 @@ const api: WriterApi = {
   copyText: text => ipcRenderer.invoke('text:copy', text),
   listProjects: () => ipcRenderer.invoke('projects:list'),
   openProject: () => ipcRenderer.invoke('projects:open'),
+  removeProject: projectId => ipcRenderer.invoke('projects:remove', projectId),
   chapters: id => ipcRenderer.invoke('chapters:list', id),
   chapterOrder: id => ipcRenderer.invoke('chapters:order', id),
   saveChapterOrder: (id, paths, hash) => ipcRenderer.invoke('chapters:save-order', id, paths, hash),

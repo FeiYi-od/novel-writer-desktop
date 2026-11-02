@@ -5,11 +5,11 @@ export class ExitSaveRegistry {
   private entries = new Map<symbol, { label: string; state: () => State }>();
   register(label: string, state: () => State) { const id = Symbol(label); this.entries.set(id, { label, state }); return () => { this.entries.delete(id); }; }
   /** Synchronization must never discard a hidden page's draft by remounting it. */
-  assertClean(exceptLabel?: string) {
+  assertClean(exceptLabel?: string, action = '同步固定资料') {
     for (const entry of this.entries.values()) {
       if (entry.label === exceptLabel) continue;
       const state = entry.state();
-      if (state.busy || state.dirty) throw new Error(`${entry.label}有未保存内容或正在处理，请先完成后再同步固定资料`);
+      if (state.busy || state.dirty) throw new Error(`${entry.label}有未保存内容或正在处理，请先完成后再${action}`);
     }
   }
   preflight() {
