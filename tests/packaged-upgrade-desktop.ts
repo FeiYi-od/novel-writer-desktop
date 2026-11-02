@@ -14,7 +14,7 @@ const runtimeFiles = [
   'LICENSES.chromium.html', 'resources.pak', 'snapshot_blob.bin', 'v8_context_snapshot.bin',
   'version', 'vk_swiftshader_icd.json', 'vk_swiftshader.dll', 'vulkan-1.dll'
 ];
-const resources = ['app.asar', 'app.asar.unpacked', 'default_app.asar', 'elevate.exe', 'protect-upgrade-materials.ps1'];
+const resources = ['app.asar', 'app.asar.unpacked', 'default_app.asar', 'elevate.exe', 'protect-upgrade-materials.ps1', 'app-icon.png'];
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
 const argument = (name: string) => {

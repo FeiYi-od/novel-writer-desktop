@@ -30,6 +30,27 @@
     ; New uninstallers preserve legacy materials too; never kill an authoring process.
     !insertmacro NovelWriterProtectInstall "$INSTDIR"
   !else
+    ; A previous shortcut and a different-named destination may both be user
+    ; content. NSIS Rename would fail ambiguously or leave the wrong target;
+    ; stop before uninstalling anything and preserve both entries.
+    ${If} $oldDesktopLink != $newDesktopLink
+    ${AndIf} ${FileExists} "$oldDesktopLink"
+    ${AndIf} ${FileExists} "$newDesktopLink"
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "旧桌面快捷方式与新名称的快捷方式同时存在。请先核对并手动处理名称冲突，安装已停止，两个快捷方式与现有程序均保留。" /SD IDOK
+      ${EndIf}
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
+    ${If} $oldStartMenuLink != $newStartMenuLink
+    ${AndIf} ${FileExists} "$oldStartMenuLink"
+    ${AndIf} ${FileExists} "$newStartMenuLink"
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "旧开始菜单快捷方式与新名称的快捷方式同时存在。请先核对并手动处理名称冲突，安装已停止，两个快捷方式与现有程序均保留。" /SD IDOK
+      ${EndIf}
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
     ; This build is per-user. Refuse machine-wide upgrades rather than migrate only
     ; the installing user's materials and remove another user's installation.
     ReadRegStr $R8 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation

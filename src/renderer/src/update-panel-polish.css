@@ -1,0 +1,14 @@
+/* Keep update controls familiar and immediate; credentials remain entirely transient. */
+.book-modal.update-panel { width: min(600px, 94vw); height: auto; max-height: 90vh; overflow: auto; border: 1px solid #e1e2e5; border-radius: 16px; background: #fff; box-shadow: 0 18px 54px rgba(28, 32, 41, .16); }
+.update-panel header { gap: 16px; }
+.update-panel header h2 { color: #25272d; letter-spacing: .01em; }
+.update-panel-content { padding: 20px 28px; color: #555d69; font-size: 13px; line-height: 1.8; }
+.update-panel-content p { overflow-wrap: anywhere; }
+.update-panel-content .update-current { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 0 0 16px; color: #606773; }
+.update-current strong { color: #282c34; font-size: 15px; }
+.update-panel-content label { display: block; color: #343943; font-weight: 600; }
+.update-panel-content input { display: block; width: 100%; box-sizing: border-box; margin: 8px 0; padding: 10px 12px; border: 1px solid #d8dce3; border-radius: 9px; background: #fff; }
+.update-panel footer { gap: 10px; flex-wrap: wrap; }
+.update-panel button:focus-visible, .update-panel input:focus-visible { outline: 2px solid #4b638d; outline-offset: 2px; }
+@media (max-width: 700px) { .update-panel-content { padding: 18px 20px; } }
+@media (forced-colors: active) { .update-panel button:focus-visible, .update-panel input:focus-visible { outline-color: Highlight; } }

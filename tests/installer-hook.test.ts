@@ -20,7 +20,8 @@ async function compiler() {
   return null;
 }
 const nsi = (value: string) => value.replace(/\$/gu, () => '$$').replace(/"/gu, () => '$\\"');
-async function harness(executable: string, conflict: boolean) {
+type ShortcutCase = 'none' | 'desktop-conflict' | 'start-conflict' | 'desktop-old-only' | 'desktop-same';
+async function harness(executable: string, conflict: boolean, shortcut: ShortcutCase = 'none') {
   const root = await fs.mkdtemp(path.resolve('.artifacts/installer-hook-035-'));
   const install = path.join(root, 'old-install'), data = path.join(root, 'profile'), id = randomUUID();
   const relative = `${id}/资料.txt`, source = path.join(install, '创作资料', relative);
@@ -28,6 +29,14 @@ async function harness(executable: string, conflict: boolean) {
   if (conflict) {
     const target = path.join(data, '创作资料', relative); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, '已有新版资料');
   }
+  const links = {
+    oldDesktop: path.join(root, 'desktop-old.lnk'),
+    newDesktop: shortcut === 'desktop-same' ? path.join(root, 'desktop-old.lnk') : path.join(root, 'desktop-new.lnk'),
+    oldStart: path.join(root, 'start-old.lnk'), newStart: path.join(root, 'start-new.lnk')
+  };
+  if (shortcut === 'desktop-conflict' || shortcut === 'desktop-old-only' || shortcut === 'desktop-same') await fs.writeFile(links.oldDesktop, '旧桌面快捷方式');
+  if (shortcut === 'desktop-conflict') await fs.writeFile(links.newDesktop, '新桌面快捷方式');
+  if (shortcut === 'start-conflict') { await fs.writeFile(links.oldStart, '旧菜单快捷方式'); await fs.writeFile(links.newStart, '新菜单快捷方式'); }
   const marker = path.join(root, 'uninstall-may-proceed.txt'), output = path.join(root, 'guard.exe'), script = path.join(root, 'guard.nsi');
   const text = `Unicode true
 RequestExecutionLevel user
@@ -37,10 +46,18 @@ Name "Isolated material guard test"
 OutFile "${nsi(output)}"
 InstallDir "${nsi(install)}"
 !include LogicLib.nsh
+Var oldDesktopLink
+Var newDesktopLink
+Var oldStartMenuLink
+Var newStartMenuLink
 !define INSTALL_REGISTRY_KEY "Software\\NovelWriterTests\\${randomUUID()}"
 !define NOVEL_WRITER_UPGRADE_DATA "${nsi(data)}"
 !include "${nsi(path.resolve('scripts/installer-materials.nsh'))}"
 Section
+  StrCpy $oldDesktopLink "${nsi(links.oldDesktop)}"
+  StrCpy $newDesktopLink "${nsi(links.newDesktop)}"
+  StrCpy $oldStartMenuLink "${nsi(links.oldStart)}"
+  StrCpy $newStartMenuLink "${nsi(links.newStart)}"
   !insertmacro customCheckAppRunning
   FileOpen $0 "${nsi(marker)}" w
   FileWrite $0 "guard-passed"
@@ -53,7 +70,13 @@ SectionEnd
   try { await run(output, ['/S'], { windowsHide: true, timeout: 60000 }); }
   catch (error) { code = Number((error as { code: number }).code); assert.ok(Number.isFinite(code), 'guard must exit, not time out'); }
   assert.equal(await fs.readFile(source, 'utf8'), '旧版虚构原件');
-  if (conflict) {
+  if (shortcut === 'desktop-conflict' || shortcut === 'start-conflict') {
+    assert.notEqual(code, 0); await assert.rejects(fs.access(marker));
+    const oldLink = shortcut === 'desktop-conflict' ? links.oldDesktop : links.oldStart;
+    const newLink = shortcut === 'desktop-conflict' ? links.newDesktop : links.newStart;
+    assert.equal(await fs.readFile(oldLink, 'utf8'), shortcut === 'desktop-conflict' ? '旧桌面快捷方式' : '旧菜单快捷方式');
+    assert.equal(await fs.readFile(newLink, 'utf8'), shortcut === 'desktop-conflict' ? '新桌面快捷方式' : '新菜单快捷方式');
+  } else if (conflict) {
     assert.notEqual(code, 0); await assert.rejects(fs.access(marker));
     assert.equal(await fs.readFile(path.join(data, '创作资料', relative), 'utf8'), '已有新版资料');
   } else {
@@ -68,4 +91,14 @@ test('actual NSIS pre-uninstall hook preserves legacy materials before permittin
 test('actual NSIS pre-uninstall hook aborts on conflicting stable materials and preserves both sides', async t => {
   const exe = await compiler(); if (!exe) { t.skip('Windows cached NSIS compiler required'); return; }
   await harness(exe, true);
+});
+test('actual NSIS hook rejects desktop and start-menu shortcut rename conflicts without touching either side', async t => {
+  const exe = await compiler(); if (!exe) { t.skip('Windows cached NSIS compiler required'); return; }
+  await harness(exe, false, 'desktop-conflict');
+  await harness(exe, false, 'start-conflict');
+});
+test('actual NSIS hook permits a lone old shortcut or an unchanged shortcut path', async t => {
+  const exe = await compiler(); if (!exe) { t.skip('Windows cached NSIS compiler required'); return; }
+  await harness(exe, false, 'desktop-old-only');
+  await harness(exe, false, 'desktop-same');
 });

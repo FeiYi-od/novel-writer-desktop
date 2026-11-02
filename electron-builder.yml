@@ -1,5 +1,5 @@
 appId: com.novelwriter.desktop
-productName: 小说编写器
+productName: 星序 starwriting
 copyright: 本地创作工具，数据只保存在本机与作者选择的同步目录
 directories:
   # The workspace tree inherits a DENY(DC) ACE on Everyone, which makes Electron abort at startup
@@ -24,13 +24,14 @@ extraResources:
 win:
   # Keep the established executable name and app identity for existing installs.
   # Edit PE resources for the icon, but do not attempt code signing.
+  executableName: 小说编写器
   signAndEditExecutable: true
   signExecutable: false
   icon: assets/app-icon.ico
   target:
     - target: nsis
       arch: [x64]
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: starwriting-${version}-${arch}.${ext}
 nsis:
   include: scripts/installer-materials.nsh
   installerIcon: assets/app-icon.ico
@@ -40,5 +41,6 @@ nsis:
   allowElevation: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
-  shortcutName: 小说编写器
+  shortcutName: 星序 starwriting
+  uninstallDisplayName: 星序 starwriting ${version}
   deleteAppDataOnUninstall: false

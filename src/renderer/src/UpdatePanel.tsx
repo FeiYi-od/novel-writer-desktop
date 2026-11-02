@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import './update-panel-polish.css';
 
 export interface UpdateResult {
   currentVersion: string;
@@ -77,8 +78,7 @@ export function UpdatePanel({ currentVersion, onCheck, onOpenPage, onClose }: Pr
   };
 
   return <div className="modal-overlay"><section ref={panel} tabIndex={-1} role="dialog" aria-modal="true"
-    aria-labelledby="update-panel-title" aria-busy={busy} className="book-modal" data-testid="update-panel"
-    style={{ width: 600, height: 'auto', maxHeight: '90vh', overflow: 'auto' }}
+    aria-labelledby="update-panel-title" aria-busy={busy} className="book-modal update-panel" data-testid="update-panel"
     onKeyDown={event => {
       if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); close(); }
       if (event.key === 'Tab') {
@@ -90,13 +90,12 @@ export function UpdatePanel({ currentVersion, onCheck, onOpenPage, onClose }: Pr
       }
     }}>
     <header><div><h2 id="update-panel-title">检查更新</h2></div><button type="button" onClick={close}>关闭</button></header>
-    <div style={{ padding: '20px 28px', fontSize: 13, lineHeight: 1.8 }}>
-      <p>当前版本：<strong data-testid="update-current-version">{currentVersion || '读取中…'}</strong></p>
+    <div className="update-panel-content">
+      <p className="update-current">当前版本 <strong data-testid="update-current-version">{currentVersion || '读取中…'}</strong></p>
       <p>检查时会联网查询 GitHub 发布版本。仓库公开时可直接检查；私有仓库需要单独授权，浏览器中已登录 GitHub 不会自动授权程序。</p>
       <label htmlFor="update-token">GitHub 访问令牌（可选）</label>
       <input id="update-token" data-testid="update-token" type="password" autoComplete="off" spellCheck={false}
-        value={token} disabled={busy} onChange={event => setToken(event.target.value)}
-        style={{ display: 'block', width: '100%', boxSizing: 'border-box', margin: '8px 0', padding: 10, border: '1px solid #dce2d1', borderRadius: 7 }} />
+        value={token} disabled={busy} onChange={event => setToken(event.target.value)} />
       <p>令牌仅用于本次检查，不会保存。可使用仅对本仓库授予 Contents 读取权限的令牌；也可以直接在浏览器打开发布页。</p>
       {busy && <p role="status">正在检查更新…</p>}
       {error && <div role="alert" className="error" data-testid="update-error">{error}</div>}
@@ -104,7 +103,7 @@ export function UpdatePanel({ currentVersion, onCheck, onOpenPage, onClose }: Pr
         {result.updateAvailable ? <>发现新版本：<strong>{result.latestVersion}</strong>。请打开发布页查看并下载。</> : <>当前已是最新可用版本（{result.latestVersion}）。</>}
       </div>}
     </div>
-    <footer style={{ gap: 10, flexWrap: 'wrap' }}>
+    <footer>
       <button type="button" data-testid="update-check" className="primary" disabled={busy || !currentVersion} onClick={() => void check()}>检查更新</button>
       <button type="button" data-testid="update-open-page" onClick={() => void openPage()}>在浏览器打开发布页</button>
     </footer>

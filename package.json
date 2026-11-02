@@ -1,6 +1,6 @@
 {
   "name": "novel-writer",
-  "version": "0.1.1-beta.16",
+  "version": "0.1.1-beta.17",
   "private": true,
   "description": "多小说隔离的 DOCX 写作工作台",
   "main": "out/main/index.js",

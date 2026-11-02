@@ -36,9 +36,11 @@ async function main() {
     assert.ok(versionBox.x + versionBox.width <= updateBox.x || updateBox.x + updateBox.width <= versionBox.x || versionBox.y + versionBox.height <= updateBox.y || updateBox.y + updateBox.height <= versionBox.y, '版本标识不得遮挡更新入口');
     await page.getByText('更多功能', { exact: true }).click();
     if (archive) {
-      const identity = await app.evaluate(({ app: instance }) => ({ packaged: instance.isPackaged, path: instance.getAppPath(), version: instance.getVersion() }));
+      const identity = await app.evaluate(({ app: instance }) => ({ packaged: instance.isPackaged, path: instance.getAppPath(), version: instance.getVersion(), name: instance.getName() }));
       assert.equal(identity.packaged, true, '必须执行实际打包版');
       assert.equal(identity.version, expectedVersion, '打包版版本必须与 package.json 一致');
+      assert.equal(identity.name, 'novel-writer', '显示品牌改变不得改变应用内部名称及默认数据身份');
+      assert.equal(await page.title(), '星序 · starwriting');
       assert.equal(path.relative(await fs.realpath(archive), await fs.realpath(identity.path)), '', '必须执行指定安装包内的 app.asar');
     }
     // Replace all update handlers: no network request or real browser is opened by this test.

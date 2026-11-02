@@ -51,7 +51,8 @@ foreach ($entry in $buildEntries) {
   if (-not $entry.PSIsContainer -and $entry.Name -notmatch '^(?:小说编写器\.exe|version|[A-Za-z0-9_.-]+\.(?:dll|pak|dat|bin|json)|LICENSE\.electron\.txt|LICENSES\.chromium\.html)$') { throw 'Unexpected packaged file; review the build before release' }
 }
 foreach ($entry in Get-ChildItem -LiteralPath (Join-Path $build 'resources') -Force) {
-  if ($entry.Name -notin @('app.asar', 'app.asar.unpacked', 'default_app.asar', 'elevate.exe', 'protect-upgrade-materials.ps1')) { throw 'Unexpected packaged resource; review the build before release' }
+  if ($entry.Name -notin @('app.asar', 'app.asar.unpacked', 'default_app.asar', 'elevate.exe', 'protect-upgrade-materials.ps1', 'app-icon.png')) { throw 'Unexpected packaged resource; review the build before release' }
+  if ($entry.Name -eq 'app-icon.png' -and $entry.PSIsContainer) { throw 'Packaged application icon must be a file' }
 }
 if (Test-Path -LiteralPath (Join-Path $build 'locales')) {
   foreach ($entry in Get-ChildItem -LiteralPath (Join-Path $build 'locales') -Force) {

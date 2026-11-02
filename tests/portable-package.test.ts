@@ -14,6 +14,7 @@ async function fixture() {
   await fs.mkdir(path.join(build, 'resources'), { recursive: true });
   await fs.writeFile(path.join(build, '小说编写器.exe'), 'fixture executable, never launched');
   await fs.writeFile(path.join(build, 'resources', 'app.asar'), 'fixture packaged archive');
+  await fs.writeFile(path.join(build, 'resources', 'app-icon.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
   return { root, local, build };
 }
 function run(root: string, local: string, output: string, zip?: string) {
@@ -72,12 +73,25 @@ test('portable packaging creates a fresh Unicode output and a versioned ZIP with
   assert.equal(result.status, 0, result.stdout + result.stderr + String(result.error ?? ''));
   assert.equal(await fs.readFile(path.join(build, 'resources', 'app.asar'), 'utf8'), 'fixture packaged archive');
   assert.equal(await fs.readFile(path.join(output, 'resources', 'app.asar'), 'utf8'), 'fixture packaged archive');
+  const icon = await fs.readFile(path.join(build, 'resources', 'app-icon.png'));
+  assert.deepEqual(await fs.readFile(path.join(output, 'resources', 'app-icon.png')), icon);
   assert.equal(await fs.readFile(path.join(output, 'NovelWriter.exe'), 'utf8'), 'fixture executable, never launched');
   const version = JSON.parse(await fs.readFile('package.json', 'utf8')).version as string;
   const archive = await JSZip.loadAsync(await fs.readFile(path.join(root, 'release', `NovelWriter-${version}-portable.zip`)));
   assert.ok(archive.file('NovelWriter.exe'));
+  assert.deepEqual(await archive.file('resources/app-icon.png')!.async('nodebuffer'), icon);
   assert.match(await archive.file('使用说明.txt')!.async('string'), /%APPDATA%\\novel-writer/u);
   assert.equal(Object.keys(archive.files).some(name => /创作资料|private\.md/u.test(name)), false);
+});
+
+test('portable packaging refuses unknown resources before creating output', windowsOnly, async () => {
+  const { root, local, build } = await fixture();
+  await fs.writeFile(path.join(build, 'resources', 'unexpected-user-data.json'), 'private fixture');
+  const output = path.join(root, 'clean-output');
+  const result = run(root, local, output, path.join(root, 'clean.zip'));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /Unexpected packaged resource/u);
+  await assert.rejects(fs.stat(output), { code: 'ENOENT' });
 });
 
 test('portable packaging refuses a junction ancestor and leaves the target untouched', windowsOnly, async () => {
