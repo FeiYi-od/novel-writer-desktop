@@ -13,7 +13,7 @@
     Pop $R7
     ${If} $R6 != 0
       ${IfNot} ${Silent}
-        MessageBox MB_OK|MB_ICONSTOP "无法安全继续安装或卸载。请先在小说编写器中保存并退出，再重试。若仍失败，请核对应用数据目录中保留的资料升级备份；本次未继续删除旧安装。" /SD IDOK
+        MessageBox MB_OK|MB_ICONSTOP "无法安全继续安装或卸载。请先在星序（原小说编写器）中保存并退出，再重试。若仍失败，请核对应用数据目录中保留的资料升级备份；本次未继续删除旧安装。" /SD IDOK
       ${EndIf}
       SetErrorLevel 2
       Abort

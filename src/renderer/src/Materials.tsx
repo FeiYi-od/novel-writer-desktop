@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AIConnection, AITask, UiDraft } from '../../shared/contracts';
 import { materialTemplate, type MaterialKind } from '../../core/material-conversion';
+import './materials-polish.css';
 
 export function Materials({ projectId, connections, blocked, onDirty, onSaved }: { projectId: string; connections: AIConnection[]; blocked: boolean; onDirty: (dirty: boolean) => void; onSaved: (projectId: string) => Promise<void> }) {
   const [kind, setKind] = useState<MaterialKind>('character'); const [source, setSource] = useState(''); const [name, setName] = useState('导入文段');
@@ -43,7 +44,7 @@ export function Materials({ projectId, connections, blocked, onDirty, onSaved }:
   }, [projectId]);
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(''); setMessage(''); try { await action(); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const task = tasks.find(t => t.id === selected) ?? tasks[0]; const running = tasks.some(t => t.status === 'running');
-  return <section className="ai-page"><header className="ai-heading"><div><small>MANUSCRIPT TO MATERIALS</small><h1>资料转换</h1><p>DOCX / TXT → 固定格式人物卡或世界观 → 确认保存 Markdown</p></div></header>
+  return <section className="ai-page materials-page"><header className="ai-heading"><div><small>MANUSCRIPT TO MATERIALS</small><h1>资料转换</h1><p>DOCX / TXT → 固定格式人物卡或世界观 → 确认保存 Markdown</p></div></header>
     <p className="material-location">本书固定资料目录：{location || '正在读取…'}</p>
     {error && <div role="alert" className="error">{error}</div>}{draftError && <div role="alert" className="error">{draftError}</div>}{message && <p role="status">{message}</p>}
     <div className="ai-columns"><aside className="ai-panel ai-form"><h2>导入与整理</h2>

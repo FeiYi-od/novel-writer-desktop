@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import appIconUrl from '../../../assets/app-icon.svg?url';
 import type { AIConnection, BookDetails, BookSnapshot, Chapter, KnowledgeSearchHit, Manuscript, NoteKind, NotesSnapshot, Project, RichNode } from '../../shared/contracts';
 import { ManuscriptEditor } from './Editor';
 import { copyableText } from '../../core/typography';
@@ -433,7 +434,7 @@ export function App() {
       } finally { pending.current = false; setBusy(false); }
     }} />}
     <header className="topbar">
-      <div className="brand"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><path d="M12.5 27.5c-3.8-1-5.9-2.9-5.1-5.3 1-3 5.3-6.3 11-8.3 5.7-2.1 10.8-2.3 13.5-.6M27.5 12.5c3.8 1 5.9 2.9 5.1 5.3-1 3-5.3 6.3-11 8.3-5.7 2.1-10.8 2.3-13.5.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/><path d="M20 7.5c.8 6.6 3.4 9.2 10 10-6.6.8-9.2 3.4-10 10-.8-6.6-3.4-9.2-10-10 6.6-.8 9.2-3.4 10-10Z" fill="currentColor"/><circle cx="30" cy="27.5" r="1.5" fill="currentColor"/></svg></span><div>星序<small>starwriting</small><span className="app-version" data-testid="app-version">版本 {updateVersion || (versionUnavailable ? '不可用' : '读取中…')}</span></div></div>
+      <div className="brand"><span className="brand-icon" aria-hidden="true"><img src={appIconUrl} alt="" /></span><div>星序<small>starwriting</small><span className="app-version" data-testid="app-version">版本 {updateVersion || (versionUnavailable ? '不可用' : '读取中…')}</span></div></div>
       <nav className="main-nav" aria-label="主要页面"><button className={view === 'shelf' ? 'active' : ''} disabled={busy} onClick={() => setView('shelf')}><NavIcon type="shelf" />我的书架</button><button className={view === 'writer' ? 'active' : ''} disabled={busy || !active} onClick={() => setView('writer')}><NavIcon type="writer" />写作空间</button><button className={view === 'characters' ? 'active' : ''} disabled={busy || !active} onClick={() => { setCharacterRevision(value => value + 1); setView('characters'); }}><NavIcon type="people" />角色库</button><button className={view === 'styles' ? 'active' : ''} disabled={busy} onClick={() => setView('styles')}><NavIcon type="style" />文风研习室</button></nav>
       <div className="project-heading">{activeBook?.value.title ?? active?.name ?? ''}</div>
       <button className={`topbar-model ${view === 'ai-settings' ? 'active' : ''}`} onClick={() => setView('ai-settings')}><NavIcon type="model" />模型设置</button>
@@ -549,7 +550,7 @@ export function App() {
           draft.current = json; setCount(text.replace(/\s/g, '').length);
         }} onChange={(json, text) => {
           draft.current = json; draftVersion.current++; setRevision(draftVersion.current); setCheckpointStatus(''); setDirty(true); setSaveState(current => ({ ...current, unsaved: true })); setCount(text.replace(/\s/g, '').length);
-        }} /> : <div className="welcome"><div className="welcome-mark">稿</div><span className="eyebrow">YOUR WRITING ROOM</span><h2>每一个世界，都有自己的书页。</h2><p>打开小说文件夹，或从左侧选择一本书。<br />人物、设定与文风，跟随当前小说独立保存。</p><div className="feature-grid"><div><b>DOCX 正文</b><span>宋体五号，真实段首空格</span></div><div><b>多书独立</b><span>不同故事，独立资料</span></div><div><b>文件在你手中</b><span>直接读写自己的文件夹</span></div></div></div>}
+        }} /> : <div className="welcome"><div className="welcome-mark" aria-hidden="true"><img src={appIconUrl} alt="" /></div><span className="eyebrow">YOUR WRITING ROOM</span><h2>每一个世界，都有自己的书页。</h2><p>打开小说文件夹，或从左侧选择一本书。<br />人物、设定与文风，跟随当前小说独立保存。</p><div className="feature-grid"><div><b>DOCX 正文</b><span>宋体五号，真实段首空格</span></div><div><b>多书独立</b><span>不同故事，独立资料</span></div><div><b>文件在你手中</b><span>直接读写自己的文件夹</span></div></div></div>}
         <footer className="editor-footer"><span>{busy ? '处理中…' : autoSaving ? '自动保存中…' : dirty ? `正文有未保存修改${checkpointStatus ? ' · ' + checkpointStatus : ''}` : message}</span><span>{count ? `${count} 字 · ` : ''}{document?.path.toLowerCase().endsWith('.txt') ? 'TXT' : 'DOCX'} · 宋体五号</span></footer>
       </main>
       <aside className="inspector">

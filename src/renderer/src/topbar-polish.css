@@ -2,7 +2,7 @@
 .app-shell > .topbar { position: relative; z-index: 10; min-height: 76px; gap: 9px; padding: 10px 20px; background: #fafaf9; border-bottom: 1px solid #e3e3e1; }
 .topbar > .brand { width: auto; min-width: 174px; gap: 10px; color: #25262a; }
 .topbar .brand-icon { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(145deg, #edf1fc, #eeeaf8); color: #68749d; }
-.topbar .brand-icon svg { width: 32px; height: 32px; }
+.topbar .brand-icon img { display: block; width: 40px; height: 40px; }
 .topbar .brand small { color: #78867b; letter-spacing: .08em; margin-top: 2px; }
 .topbar .app-version { color: #657568; }
 .topbar .main-nav { align-items: center; gap: 3px; }
