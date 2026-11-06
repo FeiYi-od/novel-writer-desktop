@@ -9,6 +9,21 @@
 .world-books { list-style: none; padding: 0; margin: 14px 0; }
 .world-books li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid #e4e8df; }
 .world-books small { color: #758270; }
+.world-book-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.world-card-browser { margin: 18px 0; padding: 18px; border: 1px solid rgba(162, 178, 198, .45); border-radius: 18px; background: rgba(240, 245, 251, .72); }
+.world-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.world-card-heading h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.world-card-heading p, .world-card-note { color: #6a7786; font-size: 12px; line-height: 1.6; }
+.world-card-search { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; font-size: 13px; }
+.world-card-search input { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid #cbd7e5; border-radius: 10px; background: #fff; color: #273446; font: inherit; }
+.world-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); align-items: start; gap: 12px; }
+.world-card { min-width: 0; padding: 15px; border: 1px solid rgba(190, 204, 221, .65); border-radius: 14px; background: rgba(255, 255, 255, .83); }
+.world-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.world-card h4 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.world-card header span { flex-shrink: 0; color: #6b7e96; font-size: 11px; }
+.world-card-keys { color: #748195; font-size: 12px; overflow-wrap: anywhere; line-height: 1.6; }
+.world-card pre { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.7; }
+.world-card-note { margin-bottom: 0; }
 .world-hits { padding: 12px 14px; margin: 16px 0; border: 1px solid #dce3d5; border-radius: 8px; background: #f7faf4; }
 .world-hits h3 { margin: 0 0 10px; font-size: 14px; }
 .world-hits ul { padding-left: 20px; margin: 0; }

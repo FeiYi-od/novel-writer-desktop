@@ -7,6 +7,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import mammoth from 'mammoth';
 import { LibraryStore } from './library';
 import { CharacterStore } from './characters';
+import { SettingImportService } from './setting-import';
 import { CharacterTagMappingStore } from './character-tag-mapping';
 import { inspectSillyPlugin } from './silly-plugin-inspect';
 import { worldCharacterContexts } from '../core/world-character-context';
@@ -15,6 +16,7 @@ import { MaterialSyncService } from './material-sync';
 import { OperationGate } from './operation-gate';
 import { protectLegacyMaterials } from './material-upgrade';
 import { ChapterOrderStore } from './chapter-order';
+import { ChapterDisplayNames } from './chapter-display-names';
 import { BookReplace } from './book-replace';
 import { analyzeDocx } from './docx-capabilities';
 import { TimelineStore } from './timeline';
@@ -45,7 +47,8 @@ import { ModelCache } from './model-cache';
 import { probeTargets } from './nas-probe';
 import { detectPathLocation } from './drive-type';
 import { backupBook, restoreBackup, verifyBackup } from './nas-backup';
-import { DocxCopyService } from './docx-copy-service';
+import { DocxCopyService, validateDocxForTextExtraction } from './docx-copy-service';
+import { readBoundedReference, ReferenceImportBudget } from './reference-file';
 import { validateReplacementImage } from './image-limits';
 import { runOfflineDrill } from './drill';
 import { inspectKeys, restoreFromBackup } from './key-recovery';
@@ -57,7 +60,7 @@ import { inspectBook } from './book-health';
 import { exportBookZip } from './book-export';
 import { collectChapterStats } from './chapter-stats';
 import { exportChapterText } from './chapter-export';
-import type { ModelDiscoveryRequest } from '../shared/contracts';
+import type { ChapterImportDecision, ModelDiscoveryRequest } from '../shared/contracts';
 import { DetectionService } from './detection';
 import { DetectionUsageStore } from './detection-usage';
 import { VectorIndexStore } from './vector-index-store';
@@ -89,6 +92,22 @@ process.on('uncaughtException', error => recordStartupError('uncaughtException',
 process.on('unhandledRejection', error => recordStartupError('unhandledRejection', error));
 let window: BrowserWindow | null = null;
 
+/** 选择并校验封面图片，返回统一缩放的 PNG；取消返回 null。新建向导与书架封面共用。 */
+async function selectCoverPng(): Promise<Buffer | null> {
+  const chosen = await dialog.showOpenDialog(window!, { title: '选择封面图片', properties: ['openFile'], filters: [{ name: '封面图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
+  if (chosen.canceled) return null;
+  const file = chosen.filePaths[0];
+  const stat = await fs.stat(file);
+  if (!stat.isFile() || stat.size > 8 * 1024 * 1024) throw new Error('封面图片请控制在 8 MB 内');
+  const imageBytes = await fs.readFile(file);
+  if (imageBytes.length > 8 * 1024 * 1024 || imageBytes.length !== stat.size) throw new Error('图片读取期间发生变化或超过8 MiB，请重新选择');
+  const image = nativeImage.createFromBuffer(imageBytes);
+  if (image.isEmpty()) throw new Error('无法识别这张图片');
+  const size = image.getSize();
+  if (size.width * size.height > 24000000) throw new Error('图片分辨率过大，请先缩小');
+  return image.resize({ width: Math.min(size.width, 720) }).toPNG();
+}
+
 async function bootstrap() {
   // Upgrade steps run before any store opens; each recorded step runs at most once.
   await runMigrations(app.getPath('userData'));
@@ -105,6 +124,14 @@ async function bootstrap() {
   const docxCopies = new DocxCopyService(workspace);
   await workspace.initialize();
   const chapterOrder = new ChapterOrderStore(workspace);
+  const chapterDisplayNames = new ChapterDisplayNames(app.getPath('userData'), workspace);
+  const withChapterDisplayNames = async <T extends { path: string; name: string }>(id: string, entries: T[]): Promise<T[]> => {
+    try {
+      const names = await chapterDisplayNames.read(id);
+      const byPath = new Map(names.entries.map(entry => [path.normalize(entry.path).toLowerCase(), entry.name]));
+      return entries.map(entry => ({ ...entry, name: byPath.get(path.normalize(entry.path).toLowerCase()) ?? entry.name }));
+    } catch { return entries; } // Keep chapters accessible; the UI reports metadata errors separately.
+  };
   const bookReplace = new BookReplace(workspace, app.getPath('userData'));
   const timeline = new TimelineStore(workspace);
   const relations = new RelationStore(workspace);
@@ -186,6 +213,7 @@ async function bootstrap() {
   const ai = new AIService(app.getPath('userData'), connections, workspace, library, characters, planning, memory, knowledge, worldInfo, characterTagMappings);
   const modelCache = new ModelCache(path.join(app.getPath('userData'), 'model-cache.json'));
   const modelDiscovery = new ModelDiscoveryService(connections, 15000, modelCache);
+  const settingImport = new SettingImportService(characters, worldInfo, connections, workspace, chapterOrder, app.getPath('userData'));
   const detectorConnections = new AIConnections(path.join(app.getPath('userData'), 'detection'), {
     encrypt: value => { if (!safeStorage.isEncryptionAvailable()) throw new Error('系统密钥加密不可用'); return safeStorage.encryptString(value); }, decrypt: value => safeStorage.decryptString(value)
   });
@@ -242,9 +270,9 @@ async function bootstrap() {
       return { ...result, fingerprint: bundle.fingerprint };
     },
     'knowledge:cancel-index': (id: string) => knowledgeIndex.cancel(id),
-    'drafts:save': (id: string, page: 'planning' | 'materials' | 'characters' | 'summary' | 'style', values: Record<string, string>) => uiDrafts.save(id, page, values),
-    'drafts:read': (id: string, page: 'planning' | 'materials' | 'characters' | 'summary' | 'style') => uiDrafts.read(id, page),
-    'drafts:clear': (id: string, page: 'planning' | 'materials' | 'characters' | 'summary' | 'style') => uiDrafts.clear(id, page),
+    'drafts:save': (id: string, page: import('../shared/contracts').UiDraftPage, values: Record<string, string>) => uiDrafts.save(id, page, values),
+    'drafts:read': (id: string, page: import('../shared/contracts').UiDraftPage) => uiDrafts.read(id, page),
+    'drafts:clear': (id: string, page: import('../shared/contracts').UiDraftPage) => uiDrafts.clear(id, page),
     'chapters:conflicts': async (id: string) => {
       const chapters = await workspace.chapters(id);
       return findSyncConflictCopies(chapters.map(chapter => chapter.path));
@@ -252,6 +280,13 @@ async function bootstrap() {
     'chapters:watch': async (id: string) => {
       const project = workspace.getProject(id);
       chapterWatcher.watchProject(id, project.root);
+    },
+    'projects:folder-rename-status': () => workspace.folderRenameStatus(),
+    'projects:rename-folder': async (request: { projectId: string; expectedRoot: string; name: string }) => {
+      const wasWatching = chapterWatcher.watchedProject === request.projectId;
+      if (wasWatching) chapterWatcher.unwatch(request.projectId);
+      try { return await workspace.renameProjectFolder(request); }
+      catch (error) { if (wasWatching) { try { const project = workspace.getProject(request.projectId); chapterWatcher.watchProject(project.id, project.root); } catch { /* an unresolved operation keeps this project blocked */ } } throw error; }
     },
     'knowledge:sources': (projectId, corpus) => knowledge.listSources(projectId, corpus),
     'knowledge:cancel': (projectId, requestId) => knowledge.cancel(projectId, requestId),
@@ -283,6 +318,7 @@ async function bootstrap() {
     'memory:cancel-batch': (id: string) => ai.cancelSummaryBatch(id),
     'memory:confirm': (id, taskId, content, hash) => ai.confirmSummary(id, taskId, content, hash),
     'memory:update': (id, entryId, enabled, important, hash) => memory.update(id, entryId, enabled, important, hash),
+    'memory:remove-entries': (id: string, entryIds: string[], hash: string) => memory.removeEntries(id, entryIds, hash),
     'memory:save-fact': (id, edit, hash) => memory.saveFact(id, edit, hash),
     'memory:remove-fact': (id, factId, hash) => memory.removeFact(id, factId, hash),
     'planning:read': id => planning.read(id),
@@ -306,6 +342,7 @@ async function bootstrap() {
       } else await characters.save(id, { fields: parsed, enabled: false }, targetHash);
     },
     'detector:connections': () => detectorConnections.read(),
+    'detector:remove': (id: string, expectedHash: string) => detectorConnections.remove(id, expectedHash),
     'detector:save': (edit, hash) => detectorConnections.save(edit, hash),
     'detector:detect': (id, file, hash, connectionId) => detector.detect(id, file, hash, connectionId),
     'detector:reports': id => detector.list(id),
@@ -386,16 +423,40 @@ async function bootstrap() {
       return connections.read();
     },
     'ai:connections': () => connections.read(),
+    'ai:remove-connection': (id: string, expectedHash: string) => connections.remove(id, expectedHash),
     'ai:save-connection': (edit, hash) => connections.save(edit, hash),
     'ai:test': id => ai.testConnection(id),
     'ai:start': request => ai.start(request),
     'ai:review-batch': request => ai.startReviewBatch(request),
+    'ai:remove-tasks': (id: string, taskIds: string[]) => ai.removeTasks(id, taskIds),
+    'ai:remove-task': (id: string, taskId: string) => ai.removeTask(id, taskId),
     'ai:tasks': id => ai.list(id),
     'ai:cancel': (id, taskId) => ai.cancel(id, taskId),
     'ai:export': (id, taskId) => ai.export(id, taskId),
     'ai:export-review-edits': (id, taskId, issueIds, guard) => ai.exportReviewEdits(id, taskId, issueIds, guard),
     'ai:review-decisions': (id, taskId) => ai.reviewDecisions(id, taskId),
     'ai:set-review-decision': request => ai.setReviewDecision(request),
+    'setting:read-file': async () => {
+      const picked = await dialog.showOpenDialog(window!, { title: '导入设定文件（DOCX / TXT）', properties: ['openFile'], filters: [{ name: '设定文件', extensions: ['docx', 'txt'] }] });
+      if (picked.canceled || !picked.filePaths.length) return null;
+      const file = picked.filePaths[0]!;
+      const stat = await fs.stat(file).catch(() => null);
+      if (!stat || !stat.isFile() || stat.size > 5 * 1024 * 1024) throw new Error('设定文件读取失败或超过 5 MiB');
+      const ext = path.extname(file).toLowerCase();
+      const text = ext === '.docx' ? (await mammoth.extractRawText({ buffer: await fs.readFile(file) })).value : decodeText(await fs.readFile(file)).text;
+      return { name: path.basename(file), text };
+    },
+    'setting:preview': (id: string, settingText: string) => settingImport.preview(id, settingText),
+    'setting:model-candidates': (id: string, connectionId: string, settingText: string, template: 'character' | 'world' | 'both') => settingImport.modelCandidates(id, connectionId, settingText, template),
+    'setting:prepare-book': (id: string, chunkCharacters: number, selectedPaths?: string[]) => settingImport.prepareBook(id, chunkCharacters, selectedPaths),
+    'setting:model-book': (id: string, token: string, connectionId: string, template: 'character' | 'world' | 'both', requestId: string, retryFailed: boolean, persist: boolean) => settingImport.modelBookCandidates(id, token, connectionId, template, requestId, undefined, undefined, retryFailed, persist),
+    'setting:checkpoint-read': (id: string) => settingImport.readBookCheckpoint(id),
+    'setting:checkpoint-restore': (id: string, hash: string) => settingImport.restoreBookCheckpoint(id, hash),
+    'setting:checkpoint-discard': (id: string, hash: string) => settingImport.discardBookCheckpoint(id, hash),
+    'setting:checkpoint-inspect-file': (id: string) => settingImport.inspectBookCheckpointFile(id),
+    'setting:checkpoint-quarantine': (id: string, hash: string) => settingImport.quarantineBookCheckpoint(id, hash),
+    'setting:cancel-book': (id: string, requestId: string) => settingImport.cancelBook(id, requestId),
+    'setting:confirm': (id: string, token: string, selections: { id: string; mode?: 'new' | 'merge'; fields?: Record<string, string> }[]) => settingImport.confirm(id, token, selections),
     'characters:read': (id: string) => characters.read(id),
     'characters:save': (id: string, edit: CharacterEdit, hash: string) => characters.save(id, edit, hash),
     'macros:read': (id: string) => macros.read(id),
@@ -423,6 +484,17 @@ async function bootstrap() {
       return macros.importBytes(id, bytes);
     },
     'world:list': (id: string) => worldInfo.list(id),
+    'world:read': async (id: string, name: string) => {
+      const snapshot = await worldInfo.readSnapshot(id, name);
+      return { name, hash: snapshot.hash, container: snapshot.container, entries: snapshot.value.entries.map(({ id: entryId, comment, content, keys, secondaryKeys, disabled, constant }) => ({ id: entryId, comment, content, keys, secondaryKeys, disabled, constant })) };
+    },
+    'world:save-entry': (request: import('../shared/contracts').WorldCardEditRequest) => worldInfo.saveEntry(request),
+    'world:delete-entry': (request: { projectId: string; book: string; entryId: string; expectedHash: string }) => worldInfo.deleteEntry(request),
+    'world:entry-trash-list': (id: string) => worldInfo.listEntryTrash(id),
+    'world:entry-trash-preview': (request: { projectId: string; trashId: string; expectedHash: string }) => worldInfo.previewEntryTrash(request),
+    'world:entry-trash-merge': (request: Parameters<typeof worldInfo.mergeEntryTrash>[0]) => worldInfo.mergeEntryTrash(request),
+    'world:entry-trash-purge': (request: { projectId: string; trashId: string; expectedHash: string }) => worldInfo.purgeEntryTrash(request),
+    'world:restore-entry': (request: { projectId: string; trashId: string; expectedHash: string; mode?: 'original' | 'append' }) => worldInfo.restoreEntry(request),
     'world:remove': (id: string, name: string, expectedHash: string) => worldInfo.remove(id, name, expectedHash),
     'world:preview': (id: string, names: string[], text: string, characterNames?: string[]) => worldInfo.preview(id, names, text, characterNames),
     'world:preview-enabled': async (id: string, names: string[], text: string, tagIds?: unknown) => {
@@ -478,42 +550,55 @@ async function bootstrap() {
     'book:save': (id: string, value: BookDetails, hash: string) => library.save(id, value, hash),
     'book:cover': async (id: string) => {
       workspace.getProject(id);
-      const chosen = await dialog.showOpenDialog(window!, { title: '选择封面图片', properties: ['openFile'], filters: [{ name: '封面图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
-      if (chosen.canceled) return null;
-      const file = chosen.filePaths[0];
-      const stat = await fs.stat(file);
-      if (!stat.isFile() || stat.size > 8 * 1024 * 1024) throw new Error('封面图片请控制在 8 MB 内');
-      const imageBytes = await fs.readFile(file);
-      if (imageBytes.length > 8 * 1024 * 1024 || imageBytes.length !== stat.size) throw new Error('图片读取期间发生变化或超过8 MiB，请重新选择');
-      const image = nativeImage.createFromBuffer(imageBytes);
-      if (image.isEmpty()) throw new Error('无法识别这张图片');
-      const size = image.getSize();
-      if (size.width * size.height > 24000000) throw new Error('图片分辨率过大，请先缩小');
-      const png = image.resize({ width: Math.min(size.width, 720) }).toPNG();
+      const png = await selectCoverPng();
+      if (!png) return null;
       return { asset: await library.addCover(id, png), dataUrl: `data:image/png;base64,${png.toString('base64')}` };
     },
+    'cover:pick': async () => {
+      const png = await selectCoverPng();
+      return png ? { base64: png.toString('base64'), dataUrl: `data:image/png;base64,${png.toString('base64')}` } : null;
+    },
+    'book:initialize': async (id: string, options: { introduction?: string; coverBase64?: string }) => {
+      workspace.getProject(id);
+      const snapshot = await library.read(id);
+      const cover = options?.coverBase64 ? await library.addCover(id, Buffer.from(options.coverBase64, 'base64')) : snapshot.value.cover;
+      const value = { ...snapshot.value, introduction: String(options?.introduction ?? '').slice(0, 20000), cover };
+      return library.save(id, value, snapshot.hash);
+    },
+    'style:remove-sources': (id: string, sourceIds: string[], expectedHash: string) => library.removeSources(id, sourceIds, expectedHash),
+    'style:remove': (id: string, styleId: string, expectedHash: string) => library.removeStyle(id, styleId, expectedHash),
     'style:import': async (id: string, hash: string) => {
       workspace.getProject(id);
       const chosen = await dialog.showOpenDialog(window!, { title: '导入文风参考文本', properties: ['openFile', 'multiSelections'], filters: [{ name: '小说文本', extensions: ['txt', 'docx'] }] });
       if (chosen.canceled) return null;
       if (chosen.filePaths.length > 30) throw new Error('一次最多导入 30 份文本');
       const texts: { name: string; text: string; original?: Buffer }[] = [];
+      const budget = new ReferenceImportBudget();
       for (const file of chosen.filePaths) {
-        if ((await fs.stat(file)).size > 8 * 1024 * 1024) throw new Error('单份参考文件不能超过 8 MB');
+        const extension = path.extname(file).toLowerCase();
+        if (!['.txt', '.docx'].includes(extension)) throw new Error('参考文本仅支持 TXT 或 DOCX');
+        const fileLimit = (extension === '.txt' ? 24 : 20) * 1024 * 1024;
+        const limitMessage = extension === '.txt' ? '单份 TXT 参考文件不能超过 24 MiB' : '单份 DOCX 参考文件不能超过 20 MiB';
+        const bytes = await readBoundedReference(file, fileLimit, limitMessage);
+        budget.addBytes(bytes.length);
         let text: string;
-        if (path.extname(file).toLowerCase() === '.docx') text = (await mammoth.extractRawText({ path: file })).value;
-        else if (path.extname(file).toLowerCase() === '.txt') {
-          const bytes = await fs.readFile(file);
-          if (bytes[0] === 255 && bytes[1] === 254) text = new TextDecoder('utf-16le').decode(bytes);
-          else { try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = new TextDecoder('gb18030', { fatal: true }).decode(bytes); } }
-        } else throw new Error('参考文本仅支持 TXT 或 DOCX');
-        texts.push({ name: path.basename(file), text, original: path.extname(file).toLowerCase() === '.docx' ? await fs.readFile(file) : undefined });
+        if (extension === '.docx') { await validateDocxForTextExtraction(bytes); text = (await mammoth.extractRawText({ buffer: bytes })).value; }
+        else if (bytes[0] === 255 && bytes[1] === 254) text = new TextDecoder('utf-16le').decode(bytes);
+        else { try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = new TextDecoder('gb18030', { fatal: true }).decode(bytes); } }
+        budget.addText(text);
+        texts.push({ name: path.basename(file), text, original: extension === '.docx' ? bytes : undefined });
       }
       return library.addSources(id, texts, hash);
     },
     'style:learn': request => ai.startStyleLearning(request),
     'style:confirm-learned': (id, taskId, name, rules, hash) => ai.confirmStyleLearning(id, taskId, name, rules, hash),
-    'style:analyze': (id: string, name: string, sources: string[], hash: string) => library.analyze(id, name, sources, hash),
+    'style:resume': (id: string, taskId: string) => ai.resumeStyleLearning(id, taskId),
+    'style:label-source': (id: string, sourceId: string, label: { author?: string; work?: string }, hash: string) => library.labelStyleSource(id, sourceId, label, hash),
+    'style:import-from-book': (source: string, target: string, styleId: string, hash: string) => library.importStyleFromBook(source, target, styleId, hash),
+    'style:compare-merge': (id: string, styleIds: string[]) => library.compareStyleArchives(id, styleIds),
+    'style:merge': (id: string, name: string, styleIds: string[], mode: 'equal' | 'characters', hash: string) => library.mergeStyles(id, name, styleIds, mode, hash),
+    'style:plan': (id: string, sources: string[], hash: string, connectionId: string) => ai.previewStyleLearning(id, sources, hash, connectionId),
+    'style:analyze': (id: string, name: string, sources: string[], hash: string, options?: { mode?: 'sample' | 'full'; chunkCharacters?: number }) => library.analyze(id, name, sources, hash, options),
     'text:copy': (text: string) => {
       if (typeof text !== 'string' || text.length > 10000000) throw new Error('复制内容无效或过长');
       return clipboard.writeText(text);
@@ -523,13 +608,60 @@ async function bootstrap() {
       const result = await dialog.showOpenDialog(window!, { title: '选择一本小说的独立文件夹', properties: ['openDirectory', 'createDirectory'] });
       return result.canceled ? null : workspace.attach(result.filePaths[0]);
     },
+'projects:create': (parent: string, title: string, firstChapter?: boolean) => workspace.createProject(parent, title, { firstChapter: firstChapter === true }),
+    'projects:pick-parent': async () => {
+      const result = await dialog.showOpenDialog(window!, { title: '选择新小说的存放位置（可新建文件夹）', properties: ['openDirectory', 'createDirectory'] });
+      return result.canceled ? null : result.filePaths[0];
+    },
+    'chapters:import-preview': async (projectId: string) => {
+      const result = await dialog.showOpenDialog(window!, { title: '导入章节（DOCX / TXT，可多选）', properties: ['openFile', 'multiSelections'], filters: [{ name: '章节文件', extensions: ['docx', 'txt'] }] });
+      if (result.canceled || !result.filePaths.length) return { token: '', items: [], skipped: [] };
+      const files = [];
+      for (const file of result.filePaths.slice(0, 50)) {
+        const name = path.basename(file), extension = path.extname(name).toLowerCase();
+        if (!['.docx', '.txt'].includes(extension)) { files.push({ name, data: new Uint8Array() }); continue; }
+        const stat = await fs.stat(file).catch(() => null);
+        if (!stat || !stat.isFile() || stat.size > 20 * 1024 * 1024) { files.push({ name, data: new Uint8Array() }); continue; }
+        files.push({ name, data: new Uint8Array(await fs.readFile(file)) });
+      }
+      return workspace.planChapterImport(projectId, files);
+    },
+    'chapters:split-preview': async (projectId: string) => {
+      const result = await dialog.showOpenDialog(window!, { title: '导入整本 TXT（自动识别章节，可校正）', properties: ['openFile'], filters: [{ name: 'TXT', extensions: ['txt'] }] });
+      if (result.canceled || !result.filePaths.length) return { token: '', items: [], skipped: [], rule: '' };
+      const file = result.filePaths[0]!;
+      const name = path.basename(file);
+      const stat = await fs.stat(file).catch(() => null);
+      if (!stat || !stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('整本 TXT 读取失败或超过 20 MiB');
+      return workspace.planTextSplit(projectId, { name, data: new Uint8Array(await fs.readFile(file)) });
+    },
+    'chapters:import-commit': (projectId: string, token: string, decisions: ChapterImportDecision[]) => workspace.commitChapterImport(projectId, token, decisions),
+    'chapters:import-dialog': async (projectId: string) => {
+      const result = await dialog.showOpenDialog(window!, { title: '导入章节（DOCX / TXT，可多选）', properties: ['openFile', 'multiSelections'], filters: [{ name: '章节文件', extensions: ['docx', 'txt'] }] });
+      if (result.canceled || !result.filePaths.length) return { imported: [], skipped: [] };
+      const files = [];
+      for (const file of result.filePaths.slice(0, 50)) {
+        const name = path.basename(file), extension = path.extname(name).toLowerCase();
+        if (!['.docx', '.txt'].includes(extension)) { files.push({ name, data: new Uint8Array() }); continue; }
+        const stat = await fs.stat(file).catch(() => null);
+        if (!stat || !stat.isFile() || stat.size > 20 * 1024 * 1024) { files.push({ name, data: new Uint8Array() }); continue; }
+        files.push({ name, data: new Uint8Array(await fs.readFile(file)) });
+      }
+      return workspace.importChapters(projectId, files);
+    },
     'projects:remove': async (projectId: string) => {
+
       await workspace.detach(projectId);
       chapterWatcher.unwatch(projectId);
     },
-    'chapters:list': async (id: string) => (await chapterOrder.read(id)).entries.filter(entry => entry.present).map(({ path, name }) => ({ path, name })),
-    'chapters:order': (id: string) => chapterOrder.read(id),
-    'chapters:save-order': (id: string, paths: string[], hash: string) => chapterOrder.save(id, paths, hash),
+    'chapters:list': async (id: string) => withChapterDisplayNames(id, (await chapterOrder.read(id)).entries.filter(entry => entry.present).map(({ path, name }) => ({ path, name }))),
+    'chapters:delete': (id: string, relative: string, expectedHash: string) => workspace.deleteChapter({ projectId: id, path: relative, expectedHash }),
+    'chapters:trash-list': (id: string) => workspace.trashedChapters(id),
+    'chapters:trash-restore': (id: string, trashId: string) => workspace.restoreTrashedChapter({ projectId: id, id: trashId }),
+    'chapters:order': async (id: string) => { const snapshot = await chapterOrder.read(id); return { ...snapshot, entries: await withChapterDisplayNames(id, snapshot.entries) }; },
+    'chapters:save-order': async (id: string, paths: string[], hash: string) => { const snapshot = await chapterOrder.save(id, paths, hash); return { ...snapshot, entries: await withChapterDisplayNames(id, snapshot.entries) }; },
+    'chapters:display-names': (id: string) => chapterDisplayNames.read(id),
+    'chapters:set-display-name': (request: { projectId: string; path: string; expectedChapterHash: string; expectedNamesHash: string; name: string }) => chapterDisplayNames.set(request),
     'chapters:create': (id: string, format?: 'docx' | 'txt') => workspace.createChapter(id, undefined, format),
     'chapters:read': (id: string, relative: string) => workspace.readChapter(id, relative),
     'chapters:rename': (request: RenameChapterRequest) => workspace.renameChapter(request),
@@ -654,6 +786,7 @@ async function bootstrap() {
       return trial.run(request.connectionId, { brief: request.brief, styles: picked });
     },
     'prompts:read': (id: string) => prompts.read(id),
+    'prompts:deletion-log': (id: string) => prompts.readDeletionLog(id),
     'prompts:save': (id: string, list: { id: string; name: string; kind: 'write' | 'review' | 'planning' | 'other'; body: string; version: number; updatedAt: string; versions: { version: number; body: string; savedAt: string }[] }[], hash: string) => prompts.save(id, list, hash),
     'chapters:capabilities': async (id: string, chapterPath: string) => {
       const project = workspace.getProject(id);
@@ -687,10 +820,13 @@ async function bootstrap() {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效窗口请求');
       if (finishingExit) throw new Error('正在退出');
       if (exitToken && channel === 'plugin:inspect') throw new Error('正在保存退出，请稍后操作');
-      if (exitToken && channel === 'projects:remove') throw new Error('正在保存退出，请稍后移除书架作品');
-      if (channel === 'projects:remove' && (activeRequests > 0 || materialGate.exclusivePending || ai.hasPendingWork()))
+      if (exitToken && (channel === 'projects:remove' || channel === 'projects:rename-folder')) throw new Error('正在保存退出，请稍后操作书架作品');
+      if ((channel === 'projects:remove' || channel === 'projects:rename-folder') && (activeRequests > 0 || materialGate.exclusivePending || ai.hasPendingWork()))
         throw new Error('模型任务或文件操作尚未完成，请等待或停止后再移除书架作品');
       if (exitToken && channel === 'tag-mapping:save') throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && channel === 'setting:model-book') throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && channel === 'world:save-entry') throw new Error('正在保存退出，请稍后操作');
+      if (exitToken && (channel === 'world:delete-entry' || channel === 'world:restore-entry' || channel === 'world:entry-trash-purge' || channel === 'world:entry-trash-merge')) throw new Error('正在保存退出，请稍后操作');
       if (exitToken && channel === 'materials-sync:history-retain') throw new Error('正在保存退出，请稍后操作');
       if (exitToken && channel === 'materials-sync:history-restore') throw new Error('正在保存退出，请稍后操作');
       if (exitToken && channel.startsWith('update:')) throw new Error('正在保存退出，请稍后操作');
@@ -702,7 +838,14 @@ async function bootstrap() {
         if (channel.startsWith('app:')) return await handler(...args);
         // Network checks do not touch book files and must not hold the material gate.
         if (channel.startsWith('update:')) return await handler(...args);
-        if (channel === 'projects:remove') {
+        // Reserve the request before entering the material gate so cancellation also works while queued.
+        if (channel === 'setting:model-book') {
+          const [id, token, connectionId, template, requestId, retryFailed, persist] = args as [string, string, string, 'character' | 'world' | 'both', string, boolean, boolean];
+          if (typeof requestId !== 'string') throw new Error('全文整理请求标识无效');
+          return await settingImport.modelBookCandidates(id, token, connectionId, template, requestId, progress => { if (!event.sender.isDestroyed()) event.sender.send('setting:book-progress', progress); }, action => materialGate.shared(action), retryFailed, persist);
+        }
+        if (channel === 'setting:cancel-book') return await handler(...args);
+        if (channel === 'projects:remove' || channel === 'projects:rename-folder') {
           // Wait for file work already in flight; model tasks can outlive their starting IPC.
           return await materialGate.exclusive(() => {
             if (exitToken || ai.hasPendingWork()) throw new Error('模型任务或保存退出仍在进行，请完成或停止后再移除书架作品');

@@ -14,6 +14,18 @@ async function fixture(t: TestContext) {
 }
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+test('文件监听：排除小说资料与 Word 锁文件，同时保留子目录章节', async t => {
+  const { book } = await fixture(t);
+  const events: string[][] = [];
+  let send!: (event: string, name: string | null) => void;
+  const watcher = new ChapterWatcher((_id, paths) => events.push(paths), 20, (_folder, listener) => { send = listener; return { close() {} }; });
+  t.after(() => watcher.unwatch());
+  watcher.watchProject('p1', book);
+  for (const filename of ['小说资料/style-sources/sample.txt', '小说资料\\trash\\old.docx', '分卷/小说资料/note.txt', '~$第一章.docx', '分卷\\~$第二章.docx', '分卷/第二章.txt']) send('change', filename);
+  await wait(100);
+  assert.deepEqual(events, [['分卷/第二章.txt']]);
+});
+
 test('文件监听：合并短时间内的多次保存，只报告正文文件', async t => {
   const { book } = await fixture(t);
   const events: { projectId: string; paths: string[] }[] = [];

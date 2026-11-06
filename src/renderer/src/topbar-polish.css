@@ -13,7 +13,15 @@
 .topbar-more { position: relative; flex: none; }
 .topbar-more > summary { display: flex; align-items: center; justify-content: center; cursor: pointer; list-style: none; min-height: 36px; padding: 0 11px; border: 1px solid #dedfe1; border-radius: 8px; color: #414348; background: #fff; font-size: 12px; white-space: nowrap; }
 .topbar-more > summary::-webkit-details-marker { display: none; }
-.topbar-more > summary::after { content: '⌄'; margin-left: 7px; font-size: 13px; }
+.topbar-more > summary { gap: 8px; }
+.topbar-more > summary::after { content: none; }
+.more-chevron { width: 16px; height: 16px; flex: 0 0 16px; display: block; }
+.topbar-more[open] .more-chevron { transform: rotate(180deg); }
+/* Continuous mouse hit area across the visual gap to the popover. */
+.topbar-more-panel::before { content: ''; position: absolute; inset: -8px 0 100%; }
+@media (min-width: 1250px) and (min-height: 680px) {
+  .topbar-more-panel::before { inset: 0 100% 0 -21px; }
+}
 .topbar-more[open] > summary { border-color: #a8aaaf; background: #f0f1f2; }
 .topbar-more-panel { position: absolute; right: 0; top: calc(100% + 7px); width: 168px; padding: 6px; border: 1px solid #e0e1e3; border-radius: 11px; background: #fff; box-shadow: 0 12px 30px rgba(34, 36, 40, .13); z-index: 1; }
 .topbar-more-panel button { display: block; width: 100%; padding: 9px 10px; border: 0; text-align: left; background: transparent; color: #393b40; font-size: 12px; }
@@ -24,3 +32,15 @@
 @media (max-width: 1150px) { .app-shell > .topbar { padding: 10px 16px; gap: 5px; } .topbar > .brand { min-width: 145px; } .topbar > .project-heading { flex: 0 1 65px; max-width: 65px; } .topbar .main-nav button { padding: 8px 6px; } .topbar > button { padding: 8px 6px; } }
 @media (max-width: 700px) { .topbar-more-panel { right: auto; left: 0; } }
 @media (forced-colors: active) { .topbar-more > summary:focus-visible, .topbar-more-panel button:focus-visible, .topbar .main-nav button:focus-visible, .topbar .topbar-model:focus-visible { outline-color: Highlight; } }
+
+/* 更多功能面板：分组标题 + 分隔线，避免一列按钮没有层次。 */
+.topbar-more-panel { width: 216px; padding: 8px; display: grid; gap: 2px; }
+.more-group { display: grid; gap: 2px; padding: 4px 0; }
+.more-group + .more-group { border-top: 1px solid #ececef; margin-top: 2px; }
+.more-group-title { padding: 4px 10px 6px; color: #8a8f99; font-size: 11px; letter-spacing: .04em; }
+.topbar-more-panel .more-group button { border-radius: 8px; padding: 8px 10px; }
+.topbar-more-panel .more-group button.active { background: #eceef3; color: #202530; }
+
+/* 文风档案的删除：与「编辑规则」「用于本书」拉开层级，悬停才显出危险色。 */
+.style-card footer .style-remove { color: #8a4b45; border-color: #e4d6d3; }
+.style-card footer .style-remove:hover:not(:disabled) { color: #b42318; border-color: #e0b4ae; background: #fff6f5; }

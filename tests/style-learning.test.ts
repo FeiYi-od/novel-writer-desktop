@@ -57,3 +57,13 @@ test('模型文风 HTTP：仅参考样本、确认前不入库、确认后 MD、
   const invalid = await service.startStyleLearning({ ...request, expectedHash: book.hash, name: '无效分析' }); await wait(async () => (await service.list(a.id)).some(t => t.id === invalid.id && t.status === 'failed'));
   await assert.rejects(service.confirmStyleLearning(a.id, invalid.id, '无效', '规则', book.hash), /完整/);
 });
+
+
+test('大文本分散采样不破坏 Unicode，且保持既有首中尾采样结果', () => {
+  const text = ('始😀中\r\n尾'.repeat(40000)) + '终';
+  const max = 6000; const clean = Array.from(text.replace(/\r\n/g, '\n').trim());
+  const separator = '\n\n（样本间省略）\n\n'; const size = Math.floor((max - separator.length * 2) / 3);
+  const starts = [0, Math.floor((clean.length - size) / 2), clean.length - size];
+  const expected = starts.map(start => clean.slice(start, start + size).join('')).join(separator);
+  assert.deepEqual(sampleStyleText(text, max), { text: expected, sampled: true });
+});

@@ -81,6 +81,19 @@ export class ReviewDecisionStore {
     }
     return { file, raw, hash: raw === null ? '' : hashText(raw), items: identity.issueIds.map(id => items.find(item => item.issueId === id) ?? { issueId: id, status: 'pending' as const, updatedAt: '' }) };
   }
+  /** 删除某条审稿任务的处理记录；文件不存在视为已删除。路径/链接异常时拒绝并保留原文件。 */
+  async remove(projectId: string, taskId: string) {
+    const clean = z.object({ projectId: z.uuid(), taskId: z.uuid() }).parse({ projectId, taskId });
+    this.getProject(clean.projectId);
+    const file = await this.location({ ...clean, reportFingerprint: '', issueIds: [] } as unknown as ReviewDecisionIdentity);
+    try {
+      const stat = await fs.lstat(file);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('审稿处理记录类型异常，原文件已保留');
+      await fs.rm(file);
+      return true;
+    } catch (error) { if (absent(error as NodeJS.ErrnoException)) return false; throw error; }
+  }
+
   async read(input: ReviewDecisionIdentity) { const identity = this.identity(input), value = await this.load(identity); return { hash: value.hash, items: structuredClone(value.items) }; }
   async assertCurrent(input: ReviewDecisionIdentity, expectedHash: string) {
     const identity = this.identity(input), expected = revision.parse(expectedHash), value = await this.load(identity);

@@ -47,6 +47,18 @@ export class StoryMemoryStore {
       return this.save(id, { ...current.value, entries: [...current.value.entries.map(e => e.sourcePath === next.sourcePath ? { ...e, enabled: false } : e), next] }, expectedHash);
     });
   }
+
+  /** 批量删除章节摘要条目：一次校验、一次写入；不存在或重复的 ID 直接拒绝，不静默跳过。 */
+  removeEntries(id: string, entryIds: string[], expectedHash: string) {
+    const ids = z.array(z.uuid()).min(1).max(200).parse(entryIds);
+    return this.serial(async () => {
+      const current = await this.read(id);
+      if (new Set(ids).size !== ids.length) throw new Error('要删除的摘要不能重复');
+      const missing = ids.filter(entryId => !current.value.entries.some(entry => entry.id === entryId));
+      if (missing.length) throw new Error('有 ' + missing.length + ' 条摘要不存在或已被删除，请刷新后重试');
+      return this.save(id, { ...current.value, entries: current.value.entries.filter(entry => !ids.includes(entry.id)) }, expectedHash);
+    });
+  }
   update(id: string, entryId: string, enabled: boolean, important: boolean, expectedHash: string) {
     z.uuid().parse(entryId); z.boolean().parse(enabled); z.boolean().parse(important);
     return this.serial(async () => {

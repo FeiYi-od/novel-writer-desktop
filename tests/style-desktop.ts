@@ -29,6 +29,7 @@ async function main() {
     await page.locator('.source-list').getByRole('checkbox').check(); await page.getByLabel('文风名称', { exact: true }).fill('模型轻小说');
     await page.getByLabel('文风分析模型').selectOption({ label: '文风分析模型 · mock-style' }); await page.getByRole('button', { name: '用模型分析选中语料', exact: true }).click();
     await page.getByRole('button', { name: '放入文风确认稿', exact: true }).click();
+    await page.getByText('将使用分析时的名称「模型轻小说」保存。', { exact: true }).waitFor();
     assert.equal((await page.evaluate(id => window.writer.readBook(id), projectId)).value.styles.length, 0);
     await page.getByLabel('文风规则确认稿').fill('对白短而清晰，心理描写只写必要反应。\n故事事实严格服从本书设定。');
     await page.getByRole('button', { name: '确认保存模型文风', exact: true }).click(); await page.getByText('已确认保存模型文风，点击用于本书后生效', { exact: true }).waitFor();

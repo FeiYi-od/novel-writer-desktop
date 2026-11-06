@@ -1,0 +1,61 @@
+/* 设计变量：统一控件高度、间距、圆角与文本层级。
+   只做收敛，不改品牌色；正文可读性优先，不在这里加模糊/大阴影。 */
+:root {
+  --control-h: 30px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius-1: 6px;
+  --radius-2: 10px;
+  --line: var(--line, #2a2f3a);
+}
+
+.actions,
+.character-toolbar .actions,
+.shelf-title-actions,
+.new-book-path,
+.model-categories {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+.actions > button,
+.character-toolbar button,
+.topbar-model,
+.style-merge button,
+.style-import-book button {
+  min-height: var(--control-h);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-1);
+}
+
+input,
+select,
+textarea {
+  min-height: var(--control-h);
+  border-radius: var(--radius-1);
+}
+
+.page-title,
+.character-toolbar,
+.style-merge,
+.style-import-book {
+  gap: var(--space-2);
+}
+
+/* 窄屏：允许工具栏换行，禁止横向溢出。 */
+@media (max-width: 1100px) {
+  .actions,
+  .character-toolbar .actions,
+  .shelf-title-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* 让文风卡片底部操作在窄屏换行时不挤压标题。 */
+.style-card footer > div { display: flex; flex-wrap: wrap; gap: 8px; }
+

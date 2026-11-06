@@ -104,12 +104,18 @@ function validateArchive(source: Uint8Array) {
 }
 
 async function checkedArchive(source: Uint8Array) {
-  const names = validateArchive(source), zip = await JSZip.loadAsync(source);
+  const names = validateArchive(source);
+  let zip: JSZip;
+  try { zip = await JSZip.loadAsync(source, { checkCRC32: true }); }
+  catch { throw new Error('DOCX 内容校验失败，已保留原文件'); }
   // Unicode path extras must not rename or synthesize entries after preflight.
   if (Object.keys(zip.files).length !== names.length || names.some(name => !zip.files[name])) throw new Error('DOCX 条目名称与预检目录不符');
   if (!zip.file('word/document.xml')) throw new Error('这不是可编辑的 DOCX（缺少 word/document.xml）');
   return zip;
 }
+
+/** Bound ZIP entries and decompression before handing external DOCX bytes to a text extractor. */
+export async function validateDocxForTextExtraction(source: Uint8Array) { await checkedArchive(source); }
 
 /** All source reads and copy publication use Workspace's frozen project/path/hash guards. */
 export class DocxCopyService {

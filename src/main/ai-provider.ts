@@ -62,7 +62,7 @@ export async function streamChat(profile: AIConnection, key: string, messages: C
   });
   if (!response.ok) {
     await response.body?.cancel();
-    throw new Error(`API 返回 HTTP ${response.status}。${response.status === 401 || response.status === 403 ? '请检查密钥及模型权限。' : response.status === 429 ? '请求限流或余额不足。' : '请检查地址、模型及输出参数。'}`);
+    throw new Error(`API 返回 HTTP ${response.status}。${response.status === 401 || response.status === 403 ? '请检查密钥及模型权限。' : response.status === 402 ? '账户余额或付款状态可能有问题，请检查服务商账户。' : response.status === 429 ? '请求限流或余额不足。' : '请检查地址、模型及输出参数。'}`);
   }
   const isOllama = profile.adapter === 'ollama';
   const contentType = response.headers.get('content-type') ?? '';

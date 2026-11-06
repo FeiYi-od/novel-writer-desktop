@@ -47,6 +47,7 @@ export function DetectorSettings({ onDirty }: { onDirty: (value: boolean) => voi
     <label className="ai-check"><input type="checkbox" aria-label="清除已存朱雀密钥" disabled={busy} checked={!!edit.clearKey} onChange={e => change({ clearKey: e.target.checked })} />清除已存检测密钥</label>
     <div className="detection-connection-actions">
       <button className="primary" disabled={busy || !edit.name.trim() || !edit.baseUrl.trim()} onClick={() => void run(save)}>保存朱雀连接</button>
+      {connection?.id && <button className="danger" data-testid="detector-remove" disabled={busy || dirty} onClick={() => { if (!window.confirm('删除朱雀检测连接？历史报告保留，但会提示连接不存在。')) return; void run(async () => { const next = await window.writer.removeDetectorConnection(connection.id, snapshot.hash); setSnapshot(next); setEdit({ ...next.connections[0], apiKey: '' }); setDirty(false); setMessage('朱雀连接已删除'); }); }}>删除朱雀连接</button>}
       <button disabled={busy || dirty || !connection?.id || !connection.hasKey} onClick={() => void run(async () => {
         if (!connection) return;
         const result = await window.writer.testDetectorConnection(connection.id);

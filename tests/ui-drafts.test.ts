@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { Workspace } from '../src/main/workspace';
 import { UiDraftStore } from '../src/main/ui-drafts';
+import { parseWorldCardDraft, worldCardDraftPayload } from '../src/core/world-card-draft';
 
 async function fixture(t: TestContext) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-ui-draft-'));
@@ -85,4 +86,24 @@ test('同页面慢写入不能覆盖后续写入或清空，且失败后队列�
     await f.store.save(f.a.id, 'planning', { doc: '队列继续' });
     assert.equal((await f.store.read(f.a.id, 'planning'))?.values.doc, '队列继续');
   } finally { (native as any).writeFile = original; release(); }
+});
+
+test('世界卡草稿按小说隔离，校验来源版本且非法页面不能越界', async t => {
+  const f = await fixture(t);
+  const target = { projectId: f.a.id, book: '世界', entryId: '3', expectedHash: 'a'.repeat(64), comment: '虚构港', content: '旧值', keys: ['港'] };
+  const payload = worldCardDraftPayload(target, '虚构港', '尚未保存', '港\n码头');
+  await f.store.save(f.a.id, 'world-card', payload);
+  const draft = (await f.store.read(f.a.id, 'world-card'))!;
+  assert.equal(parseWorldCardDraft(f.a.id, draft).content, '尚未保存');
+  assert.equal(parseWorldCardDraft(f.a.id, draft).target.expectedHash, target.expectedHash);
+  await fs.mkdir(path.join(f.root, '乙')); const b = await f.workspace.attach(path.join(f.root, '乙'));
+  assert.equal(await f.store.read(b.id, 'world-card'), null);
+  assert.throws(() => parseWorldCardDraft(b.id, draft), /另一部小说/u);
+  await assert.rejects(f.store.save(f.a.id, '../escape' as never, { doc: '不得越界' }));
+  await assert.rejects(f.store.clear(f.a.id, '../escape' as never));
+  assert.equal(parseWorldCardDraft(f.a.id, (await f.store.read(f.a.id, 'world-card'))!).content, '尚未保存');
+  const invalid = { ...draft, values: { payload: '{broken' } };
+  assert.throws(() => parseWorldCardDraft(f.a.id, invalid), /损坏/u);
+  const future = { ...draft, values: { payload: JSON.stringify({ ...JSON.parse(payload.payload), schemaVersion: 2 }) } };
+  assert.throws(() => parseWorldCardDraft(f.a.id, future), /版本不受支持/u);
 });

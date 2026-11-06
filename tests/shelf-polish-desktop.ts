@@ -27,6 +27,8 @@ async function main() {
     assert.ok(layout.title <= layout.titleClient + 1, '长标题应换行');
     const cover = page.getByRole('button', { name: `打开作品 ${title}` });
     await page.getByLabel('搜索书架').focus(); await page.keyboard.press('Tab');
+    assert.equal(await page.getByTestId('new-book-open').evaluate(el => el === document.activeElement), true);
+    await page.keyboard.press('Tab');
     assert.equal(await cover.evaluate(el => el === document.activeElement), true);
     assert.notEqual(await cover.evaluate(el => getComputedStyle(el).outlineStyle), 'none');
     const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));

@@ -80,7 +80,7 @@ async function main() {
     const card = removeButton('虚构星书甲').locator('xpath=ancestor::article');
     await card.scrollIntoViewIfNeeded();
     const bounds = await card.evaluate(el => { const r=el.getBoundingClientRect(); return [...el.querySelectorAll('.card-actions button')].map(button => { const b=button.getBoundingClientRect(); return b.left>=r.left && b.right<=r.right && b.bottom<=r.bottom; }); });
-    assert.equal(bounds.length, 3); assert.ok(bounds.every(Boolean), '1000px 时三个操作不得越界');
+    assert.equal(bounds.length, 4); assert.ok(bounds.every(Boolean), '1000px 时四个操作不得越界');
     await page.screenshot({ path: path.join(fixture, 'shelf-detach.png') });
     accept = false; const beforeCancel = confirmations; const cancelled = page.waitForEvent('dialog'); await removeButton('虚构星书甲').click(); await cancelled;
     assert.equal(confirmations, beforeCancel + 1); assert.equal(await removeButton('虚构星书甲').count(), 1);

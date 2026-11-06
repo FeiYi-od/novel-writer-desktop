@@ -78,3 +78,11 @@ test('AI 世界书：显式绑定按单角色过滤，角色修改后关联失�
   assert.doesNotMatch(await context(), /特定角色与标签设定/u, '角色变化后不可使用过期关联');
   assert.equal(f.requestCount(), 0);
 });
+
+
+test('AI 空章节仍注入本书常驻世界设定', async t => {
+  const f = await fixture(t);
+  await f.worldInfo.import(f.project.id, '常驻', { entries: { '0': { key: [], constant: true, content: '空章常驻设定' } } });
+  const context = await (f.service as unknown as { worldContextFor(projectId: string, source: string): Promise<string> }).worldContextFor(f.project.id, '');
+  assert.match(context, /空章常驻设定/u); assert.equal(f.requestCount(), 0);
+});

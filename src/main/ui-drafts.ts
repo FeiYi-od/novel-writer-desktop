@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Workspace } from './workspace';
 
-const PAGE = z.enum(['planning', 'materials', 'characters', 'summary', 'style']);
+const PAGE = z.enum(['planning', 'materials', 'characters', 'summary', 'style', 'world-card']);
 export type DraftPage = z.infer<typeof PAGE>;
 const MAX_BYTES = 2 * 1024 * 1024;
 const valueSchema = z.record(z.string().max(100), z.string().max(MAX_BYTES));
@@ -29,7 +29,8 @@ export class UiDraftStore {
   }
   private async file(projectId: string, page: DraftPage) {
     this.workspace.getProject(z.uuid().parse(projectId));
-    return path.join(this.userData, 'ui-drafts', projectId, `${page}.json`);
+    const safePage = PAGE.parse(page);
+    return path.join(this.userData, 'ui-drafts', projectId, `${safePage}.json`);
   }
   read(projectId: string, page: DraftPage): Promise<UiDraft | null> {
     return this.serial(projectId, page, () => this.readInner(projectId, page));

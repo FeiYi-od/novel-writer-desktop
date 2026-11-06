@@ -9,7 +9,8 @@ import type { StoryMemoryStore } from './story-memory';
 import { applyReviewEdits, parseReview, structuredReviewInstruction, type ReviewIssue } from '../core/review';
 import { applyRichReviewEdits, validateReviewDocument } from '../core/rich-review';
 import { textDocument } from './text-import';
-import { parseLearnedStyle, styleLearningInstruction } from '../core/style-learning';
+import { parseLearnedStyle, styleLearningInstruction, chunkStyleInstruction } from '../core/style-learning';
+import { chunkSummaryInstruction } from '../core/style-summary';
 import type { PlanningStore } from './planning';
 import { planningInstruction, planningLabels } from '../core/planning';
 import { conversionInstruction } from '../core/material-conversion';
@@ -55,7 +56,7 @@ const autoReviewSchema = z.object({ connection: connectionSnapshot, status: z.en
 const taskSchema = z.object({
   schemaVersion: z.literal(1), id: z.uuid(), projectId: z.uuid(), mode: z.enum(['write', 'review', 'revise', 'character', 'world', 'plan-outline', 'plan-world', 'plan-character', 'summary', 'style-analysis']), chapterPath: z.string(), sourceHash: z.string(), instruction: z.string(), reviewTaskId: z.uuid().optional(), reviseIssueIds: z.array(z.string().regex(/^issue-\d{1,3}$/u)).min(1).max(20).optional(),
   connection: connectionSnapshot,
-  styleSource: z.object({ name: z.string(), sourceIds: z.array(z.string()), sourceHashes: z.record(z.string(), z.string()), sampled: z.boolean(), sampleCharacters: z.number(), totalCharacters: z.number(), metrics: z.object({ characters: z.number(), paragraphs: z.number(), meanSentenceLength: z.number(), meanParagraphLength: z.number(), dialogueRatio: z.number(), firstPersonPerThousand: z.number() }) }).optional(),
+  styleSource: z.object({ name: z.string(), sourceIds: z.array(z.string()), sourceHashes: z.record(z.string(), z.string()), sampled: z.boolean(), sampleCharacters: z.number(), totalCharacters: z.number(), mode: z.enum(['sample', 'full']).optional(), chunks: z.number().int().nonnegative().optional(), chunkCharacters: z.number().int().nonnegative().optional(), analyzed: z.number().int().nonnegative().optional(), planHash: z.string().optional(), planVersion: z.literal(2).optional(), connectionSalt: z.uuid().optional(), connectionFingerprint: citationHash.optional(), layers: z.number().int().nonnegative().optional(), layerNotes: z.array(z.string().max(4000)).max(200).optional(), mergeLevels: z.array(z.array(z.string().max(4000)).max(200)).max(8).optional(), chunkNotes: z.array(z.object({ index: z.number().int().nonnegative(), note: z.string().max(4000) })).max(2000).optional(), metrics: z.object({ characters: z.number(), paragraphs: z.number(), meanSentenceLength: z.number(), meanParagraphLength: z.number(), dialogueRatio: z.number(), firstPersonPerThousand: z.number() }) }).optional(),
   reviewFormat: z.enum(['text', 'issues']).optional(),
   reviewDocumentHash: citationHash.optional(),
   autoReview: autoReviewSchema.optional(),
@@ -72,6 +73,40 @@ const taskSchema = z.object({
   if (value.knowledgeCitations && (!['write', 'review'].includes(value.mode) || value.knowledgeCitations.some(ref => ref.projectId !== value.projectId)))
     ctx.addIssue({ code: 'custom', message: 'AI 历史的引用用途或小说归属不匹配' });
 });
+const styleChunkCharacters = (profile: AIConnection, requested?: number) => {
+  const safe = Math.min(20000, Math.floor((profile.contextWindow - profile.maxOutputTokens - 3000) / 3));
+  if (safe < 1000) throw new Error('模型上下文预算不足以安全分析全文分段，请调整模型窗口');
+  return Math.min(safe, requested ?? safe);
+};
+const stylePlanFingerprint = (projectId: string, profile: AIConnection, sourceIds: string[], sourceHashes: Record<string, string>, chunkCharacters: number, chunks: { text: string }[]) => hashText(JSON.stringify({ version: 2, projectId, profile: [profile.id, profile.adapter, profile.baseUrl, profile.model, profile.thinking, profile.contextWindow, profile.maxOutputTokens, profile.tokenParameter], sourceIds, sourceHashes, chunkCharacters, chunks: chunks.map(chunk => hashText(chunk.text)) }));
+/** Authentication, quota and connection failures cannot be fixed by retrying every chunk. */
+const fatalStyleRequestError = (error: unknown): string | null => {
+  if (error instanceof Error && /^API 返回 HTTP (?:401|403)(?:。|\.)/u.test(error.message)) return '模型认证或权限失败，已停止后续分段；请检查密钥及模型权限';
+  if (error instanceof Error && /^API 返回 HTTP 402(?:。|\.)/u.test(error.message)) return '模型账户余额或付款状态异常，已停止后续分段；请检查服务商账户后再继续';
+  if (error instanceof Error && /^API 返回 HTTP 429(?:。|\.)/u.test(error.message)) return '模型请求限流或余额不足，已停止后续分段；请检查额度后再继续';
+  if (error instanceof Error && /^API 返回 HTTP (?:400|404|413|422)(?:。|\.)/u.test(error.message)) return '模型请求格式、地址或参数错误，已停止后续分段；请检查模型设置';
+  if (error instanceof TypeError && /fetch failed|network|failed to fetch/iu.test(error.message)) return '模型连接失败，已停止后续分段；请检查服务地址与网络后再继续';
+  return null;
+};
+/** Never persist the key; bind resumable notes to this exact connection and credential. */
+const styleConnectionFingerprint = (profile: AIConnection, key: string, salt: string) => hashText(JSON.stringify([salt, profile.id, profile.adapter, profile.baseUrl, profile.model, profile.thinking, profile.contextWindow, profile.maxOutputTokens, profile.tokenParameter, key]));
+const validStyleNotes = (source: NonNullable<AITask['styleSource']>) => {
+  const count = source.chunks ?? 0;
+  const notes = source.chunkNotes ?? [];
+  return source.planVersion === 2 && count > 0 && notes.length === count && new Set(notes.map(item => item.index)).size === count && notes.every(item => item.index >= 1 && item.index <= count && !!item.note.trim());
+};
+const styleNotesText = (done: Map<number, string>, count: number) => [...done.entries()].sort((a, b) => a[0] - b[0]).map(([index, note]) => '\n【第 ' + index + '/' + count + ' 段】' + note).join('');
+/** Conservative UTF-8 byte groups; never split a Unicode code point. */
+const splitStyleUtf8 = (input: string, limit: number) => {
+  const groups: string[] = []; let part = ''; let bytes = 0;
+  for (const codePoint of input) {
+    const length = Buffer.byteLength(codePoint);
+    if (bytes + length > limit && part) { groups.push(part); part = ''; bytes = 0; }
+    part += codePoint; bytes += length;
+  }
+  if (part) groups.push(part);
+  return groups;
+};
 class TaskVersionFailure extends Error {}
 class TaskStorageFailure extends Error {}
 const sameCitations = (left: KnowledgeCitationReference[] | undefined, right: KnowledgeCitationReference[] | undefined) => {
@@ -118,14 +153,63 @@ export class AIService {
     }
     finally { await fs.rm(temp, { force: true }); }
   }
+  /** 删除一条已结束的任务记录：运行中、工作流父任务、仍被审稿任务引用的记录都拒绝。
+   * 只删本机历史文件，不改动任何章节正文或审稿报告内容。 */
+  async removeTask(projectId: string, taskId: string): Promise<{ removed: string }> {
+    const target = z.uuid().parse(taskId);
+    const folder = this.folder(projectId);
+    const file = path.join(folder, `${target}.json`);
+    const list = await this.list(projectId);
+    const task = list.find(item => item.id === target);
+    if (!task) throw new Error('任务记录不存在，可能已删除');
+    if (this.live.has(target) || task.status === 'running') throw new Error('任务仍在运行，请先停止再删除记录');
+    if (this.pipeline?.parent.id === target) throw new Error('这条记录属于正在执行的写审流程，请先停止整条流程');
+    const referenced = list.filter(item => item.reviewTaskId === target || item.autoReview?.taskId === target || (item.autoReviews ?? []).some(review => review.taskId === target));
+    if (referenced.length) throw new Error('仍有 ' + referenced.length + ' 条审稿任务引用这条记录，请先删除审稿记录');
+    // 先清掉审稿处理记录，再删任务文件；记录删除失败则保留任务，避免留下无法清理的孤儿记录。
+    await this.decisions.remove(projectId, target);
+    await fs.rm(file, { force: false }).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+    this.live.delete(target);
+    return { removed: target };
+  }
+
+
+  /** 批量删除审稿/任务记录：先整体校验，再逐个删处理记录与任务文件；任一不可删则整体不动。 */
+  async removeTasks(projectId: string, taskIds: string[]): Promise<{ removed: string[] }> {
+    const ids = z.array(z.uuid()).min(1).max(50).parse(taskIds);
+    if (new Set(ids).size !== ids.length) throw new Error('要删除的任务不能重复');
+    const list = await this.list(projectId);
+    const found = ids.map(id => list.find(item => item.id === id));
+    if (found.some(item => !item)) throw new Error('有任务记录不存在，可能已被删除，请刷新后重试');
+    const running = found.filter(item => item!.status === 'running' || this.live.has(item!.id));
+    if (running.length) throw new Error('仍有 ' + running.length + ' 条任务在运行，请先停止');
+    if (this.pipeline && ids.includes(this.pipeline.parent.id)) throw new Error('有记录属于正在执行的写审流程，请先停止整条流程');
+    const blocking = list.filter(item => !ids.includes(item.id) && (ids.includes(item.reviewTaskId ?? '') || ids.includes(item.autoReview?.taskId ?? '') || (item.autoReviews ?? []).some(review => ids.includes(review.taskId ?? ''))));
+    if (blocking.length) throw new Error('仍有 ' + blocking.length + ' 条任务引用所选记录，请先删除引用者');
+    const folder = this.folder(projectId);
+    for (const id of ids) {
+      await this.decisions.remove(projectId, id);
+      await fs.rm(path.join(folder, `${id}.json`), { force: false }).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+      this.live.delete(id);
+    }
+    return { removed: ids };
+  }
   async list(projectId: string): Promise<AITask[]> {
     const folder = this.folder(projectId); let names: string[];
     try { names = await fs.readdir(folder); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') names = []; else throw e; }
     const result: AITask[] = [];
     for (const name of names.filter(n => /^[a-f0-9-]{36}\.json$/.test(n))) {
       const file = path.join(folder, name);
-      if ((await fs.stat(file)).size > 12 * 1024 * 1024) throw new Error('AI 历史文件过大，请保留文件并检查');
-      const task = taskSchema.parse(JSON.parse(await fs.readFile(file, 'utf8')));
+      // 批量删除与列表刷新可能并发：文件刚被删掉时直接跳过，不把 ENOENT 抛给界面。
+      let task: AITask;
+      try {
+        if ((await fs.stat(file)).size > 12 * 1024 * 1024) throw new Error('AI 历史文件过大，请保留文件并检查');
+        task = taskSchema.parse(JSON.parse(await fs.readFile(file, 'utf8')));
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') continue;
+        throw error;
+      }
       if (task.projectId !== projectId || name !== `${task.id}.json`) throw new Error('AI 历史归属不匹配，已停止读取');
       const live = this.live.get(task.id);
       if (this.pipeline?.parent.id === task.id) {
@@ -173,7 +257,7 @@ export class AIService {
   /** World info depends on the task's own text, so both the initial build and the later re-check must
    * resolve it from `task.sourceText`; otherwise every world-triggered task looks "stale". */
   private async worldContextFor(projectId: string, sourceText: string) {
-    if (!this.worldInfo || !sourceText.trim()) return '';
+    if (!this.worldInfo) return '';
     const cards = await this.characters.read(projectId);
     const enabled = cards.value.cards.filter(card => card.enabled);
     const names = enabled.map(card => card.name);
@@ -369,13 +453,77 @@ export class AIService {
     } finally { this.starting = false; }
   }
   private starting = false;
+  /** Read-only, local preflight using the same profile and splitter as the actual task. */
+  async previewStyleLearning(projectId: string, sourceIds: string[], expectedHash: string, connectionId: string) {
+    z.object({ projectId: z.uuid(), connectionId: z.uuid(), sourceIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(30), expectedHash: z.string() }).parse({ projectId, sourceIds, expectedHash, connectionId });
+    this.folder(projectId);
+    const { profile } = await this.connections.resolve(connectionId);
+    const chunkCharacters = styleChunkCharacters(profile);
+    const plan = await this.library.styleChunks(projectId, sourceIds, expectedHash, chunkCharacters);
+    const lengths = plan.chunks.map(chunk => chunk.text.length);
+    return { chunks: plan.chunks.length, chunkCharacters, totalCharacters: plan.totalCharacters, estimatedRequests: plan.chunks.length + 1, largestChunkCharacters: Math.max(...lengths), smallestChunkCharacters: Math.min(...lengths), modelName: profile.name, model: profile.model, planFingerprint: stylePlanFingerprint(projectId, profile, sourceIds, plan.sourceHashes, chunkCharacters, plan.chunks) };
+  }
   async startStyleLearning(input: StyleLearningRequest): Promise<AITask> {
-    const request = z.object({ projectId: z.uuid(), connectionId: z.uuid(), name: z.string().trim().min(1).max(100), sourceIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(30), expectedHash: z.string() }).parse(input);
+    const request = z.object({ projectId: z.uuid(), connectionId: z.uuid(), name: z.string().trim().min(1).max(100), sourceIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(30), expectedHash: z.string(), mode: z.enum(['sample', 'full']).default('sample'), chunkCharacters: z.number().int().min(1000).max(20000).optional(), expectedPlanFingerprint: citationHash.optional() }).parse(input);
     this.folder(request.projectId);
     if (this.manualBatch || this.pipeline || this.starting || [...this.live.values()].some(item => item.task.status === 'running')) throw new Error('已有 AI 任务运行，请等待或取消');
     this.starting = true;
     try {
       const { profile, key } = await this.connections.resolve(request.connectionId);
+      if (request.mode === 'full') {
+        // 全文模式：按模型预算切块逐段分析，再用一次汇总把笔记压成规则；覆盖范围与进度写入任务。
+        const chunkCharacters = styleChunkCharacters(profile, request.chunkCharacters);
+        const plan = await this.library.styleChunks(request.projectId, request.sourceIds, request.expectedHash, chunkCharacters);
+        if (request.expectedPlanFingerprint && request.expectedPlanFingerprint !== stylePlanFingerprint(request.projectId, profile, request.sourceIds, plan.sourceHashes, chunkCharacters, plan.chunks)) throw new Error('模型配置或参考文本已变化，请重新预估后再开始');
+        const { hasKey: _fullHasKey, ...fullConnection } = profile;
+        const connectionSalt = randomUUID();
+        const task: AITask = {
+          schemaVersion: 1, id: randomUUID(), projectId: request.projectId, mode: 'style-analysis', chapterPath: '文风分析/' + request.name,
+          sourceHash: hashText(JSON.stringify(plan.sourceHashes)), instruction: styleLearningInstruction,
+          sourceText: '全文分段：' + plan.chunks.length + ' 段，每段≤' + chunkCharacters + ' 字，总计 ' + plan.totalCharacters + ' 字符',
+          context: '', contextHash: hashText(''), connection: fullConnection, createdAt: new Date().toISOString(), status: 'running', text: '', error: '', finishReason: '',
+          styleSource: { name: request.name, sourceIds: request.sourceIds, sourceHashes: plan.sourceHashes, sampled: false, sampleCharacters: plan.totalCharacters, totalCharacters: plan.totalCharacters, metrics: plan.metrics, mode: 'full', chunks: plan.chunks.length, chunkCharacters, analyzed: 0, planHash: hashText(JSON.stringify({ version: 2, chunkCharacters, sourceHashes: plan.sourceHashes, chunks: plan.chunks.map(chunk => hashText(chunk.text)) })), planVersion: 2, connectionSalt, connectionFingerprint: styleConnectionFingerprint(profile, key, connectionSalt), chunkNotes: [] }
+        };
+        await this.persist(task); const controller = new AbortController(); this.live.set(task.id, { task, controller });
+        void this.execute(task, controller, async () => {
+          let notes = '';
+          const failed: number[] = [];
+          for (const chunk of plan.chunks) {
+            if (controller.signal.aborted) return 'stop';
+            const messages = [
+              { role: 'system' as const, content: chunkStyleInstruction },
+              { role: 'user' as const, content: '参考文本《' + chunk.name + '》第 ' + (chunk.index + 1) + '/' + plan.chunks.length + ' 段：\n' + chunk.text }
+            ];
+            let piece = ''; let finish = ''; let lastError: unknown = null;
+            // 单段失败重试一次；仍失败就记录段号并继续，不因为一段失败丢掉整本。
+            for (let attempt = 0; attempt < 2; attempt++) {
+              if (controller.signal.aborted) return 'stop';
+              piece = '';
+              try { finish = await streamChat(profile, key, messages, controller.signal, part => { piece += part; }); lastError = null; }
+              catch (error) { if (controller.signal.aborted) return 'stop'; const fatal = fatalStyleRequestError(error); if (fatal) throw new Error(fatal); lastError = error; finish = 'failed'; }
+              if (finish === 'stop' && piece.trim()) break;
+            }
+            if (finish !== 'stop' || !piece.trim()) {
+              if (controller.signal.aborted) return 'stop';
+              failed.push(chunk.index + 1);
+              task.styleSource!.analyzed = task.styleSource!.chunkNotes?.length ?? 0;
+              task.error = '模型第 ' + failed.join('、') + ' 段分析失败，已保留完成的分段';
+              await this.persist(structuredClone(task));
+              continue;
+            }
+            notes += "\n【第 " + (chunk.index + 1) + "/" + plan.chunks.length + " 段】" + piece.trim();
+            task.styleSource!.chunkNotes = [...(task.styleSource!.chunkNotes ?? []).filter(item => item.index !== chunk.index + 1), { index: chunk.index + 1, note: piece.trim() }];
+            task.styleSource!.analyzed = task.styleSource!.chunkNotes.length;
+            task.text = notes.trim();
+            await this.persist(structuredClone(task));
+          }
+          if (failed.length) throw new Error('模型分段未全部完成：第 ' + failed.join('、') + ' 段失败，已保留完成的分段，可继续分析；未发起汇总');
+          if (!validStyleNotes(task.styleSource!)) throw new Error('模型分段记录不完整，未发起汇总请求');
+          task.text = '';
+          return this.layeredMerge(profile, key, task, notes, controller, part => { task.text += part; });
+        });
+        return structuredClone(task);
+      }
       const maxEach = Math.min(6000, Math.floor((profile.contextWindow - profile.maxOutputTokens - Buffer.byteLength(styleLearningInstruction) - 2000) / 4 / request.sourceIds.length));
       if (maxEach < 100) throw new Error('分析模型可用预算不足，请减少语料或调整窗口');
       const source = await this.library.styleSample(request.projectId, request.sourceIds, request.expectedHash, maxEach);
@@ -389,10 +537,123 @@ export class AIService {
       return structuredClone(task);
     } finally { this.starting = false; }
   }
+  /** 分层汇总：笔记超预算时先分组压缩；已完成的层写在任务里，续跑时跳过。 */
+  private async layeredMerge(profile: AIConnection, key: string, task: AITask, notes: string, controller: AbortController, onText: (text: string) => void): Promise<string> {
+    const prefix = '以下是逐段分析笔记，请按系统要求汇总为规则 JSON：\n';
+    const finalBudget = profile.contextWindow - profile.maxOutputTokens - Buffer.byteLength(styleLearningInstruction) - Buffer.byteLength(prefix) - 256;
+    const layerBudget = profile.contextWindow - profile.maxOutputTokens - Buffer.byteLength(chunkSummaryInstruction) - 256;
+    if (finalBudget < 1000 || layerBudget < 1000) throw new Error('模型上下文预算不足，无法安全汇总分段笔记');
+    let mergeNotes = notes;
+    // Existing beta.57/58 checkpoints stored the first level only; preserve and reuse it.
+    const savedLevels = task.styleSource?.mergeLevels?.map(level => [...level]) ?? (task.styleSource?.layerNotes?.length ? [[...task.styleSource.layerNotes]] : []);
+    let depth = 0; let plannedGroups = 0;
+    while (Buffer.byteLength(mergeNotes) > finalBudget) {
+      if (depth >= 8) throw new Error('模型压缩已达到 8 层上限，已完成笔记保留；请使用更大上下文模型重新分析');
+      const groups = splitStyleUtf8(mergeNotes, layerBudget);
+      plannedGroups += groups.length;
+      if (plannedGroups > 200) throw new Error('模型分层压缩超过 200 组，请减少本次语料或增大模型窗口');
+      const kept = savedLevels[depth] ?? [];
+      if (kept.some(note => !note.trim()) || kept.length > groups.length || (savedLevels.length > depth + 1 && kept.length !== groups.length)) throw new Error('模型分层断点不完整或不匹配，原笔记已保留');
+      const summaries: string[] = [];
+      for (let index = 0; index < groups.length; index++) {
+        if (controller.signal.aborted) return 'stop';
+        const existing = kept[index];
+        if (existing && existing.trim()) { summaries.push(existing); continue; }
+        let piece = '';
+        const layerFinish = await streamChat(profile, key, [{ role: 'system' as const, content: chunkSummaryInstruction }, { role: 'user' as const, content: groups[index]! }], controller.signal, part => { piece += part; });
+        if (layerFinish !== 'stop' || !piece.trim() || piece.trim().length > 4000) throw new Error('模型分层压缩未完整结束或结果过长，未发起最终汇总请求');
+        summaries.push(piece.trim());
+        savedLevels[depth] = [...summaries];
+        task.styleSource!.mergeLevels = savedLevels.map(level => [...level]);
+        task.styleSource!.layerNotes = [...savedLevels[0]!];
+        task.styleSource!.layers = plannedGroups;
+        await this.persist(structuredClone(task));
+      }
+      const nextNotes = summaries.map((summary, index) => '\n【分层汇总 ' + (index + 1) + '/' + summaries.length + '】' + summary).join('');
+      if (Buffer.byteLength(nextNotes) >= Buffer.byteLength(mergeNotes) && Buffer.byteLength(nextNotes) > finalBudget) throw new Error('模型压缩未缩小笔记，已保留结果；请使用更大上下文模型重新分析');
+      mergeNotes = nextNotes;
+      depth++;
+      task.styleSource!.layers = plannedGroups;
+      await this.persist(structuredClone(task));
+    }
+    const merge = [
+      { role: 'system' as const, content: styleLearningInstruction },
+      { role: 'user' as const, content: prefix + mergeNotes }
+    ];
+    let final = '';
+    const finish = await streamChat(profile, key, merge, controller.signal, part => { final += part; onText(part); });
+    return finish;
+  }
+  /** 从断点继续全文分段分析：核对来源哈希与分块参数后，复用已完成的段笔记，只补未完成或失败的段。 */
+  async resumeStyleLearning(projectId: string, taskId: string): Promise<AITask> {
+    this.folder(projectId);
+    if (this.manualBatch || this.pipeline || this.starting || [...this.live.values()].some(item => item.task.status === 'running')) throw new Error('已有 AI 任务运行，请等待或取消');
+    this.starting = true;
+    try {
+    const task = await this.find(projectId, taskId);
+    if (task.mode !== 'style-analysis' || task.styleSource?.mode !== 'full') throw new Error('这条记录不是全文分段分析任务');
+    const source = task.styleSource;
+    if (task.status === 'complete' && validStyleNotes(source)) throw new Error('这条分析已经完成，无需继续');
+    if (source.planVersion !== 2) throw new Error('旧任务的全文分段无法验证完整覆盖，请重新开始分析；原记录已保留');
+    const plan = await this.library.styleChunksForResume(projectId, source.sourceIds, source.chunkCharacters ?? 20000, source.sourceHashes);
+    const planHash = hashText(JSON.stringify({ version: 2, chunkCharacters: plan.chunkCharacters, sourceHashes: plan.sourceHashes, chunks: plan.chunks.map(chunk => hashText(chunk.text)) }));
+    if (source.planHash !== planHash) throw new Error('参考文本或分块参数已变化，不能从旧断点继续');
+    const { profile, key } = await this.connections.resolve(task.connection.id);
+    if (!source.connectionSalt || !source.connectionFingerprint) throw new Error('旧任务没有模型配置校验信息，无法安全续跑；已保存分段，请重新开始分析');
+    if (styleConnectionFingerprint(profile, key, source.connectionSalt) !== source.connectionFingerprint) throw new Error('模型配置或密钥已变化，不能混用旧分段；请恢复原配置或重新开始分析');
+    const notes = source.chunkNotes ?? [];
+    if (notes.some(item => item.index < 1 || item.index > plan.chunks.length || !item.note.trim()) || new Set(notes.map(item => item.index)).size !== notes.length) throw new Error('模型分段记录异常，无法安全续跑；原记录已保留');
+    if (notes.length !== plan.chunks.length && (source.layerNotes?.length || source.mergeLevels?.some(level => level.length))) throw new Error('旧任务的分层笔记基于不完整分段，无法安全续跑；原记录已保留');
+    const done = new Map(notes.map(item => [item.index, item.note]));
+    source.analyzed = done.size;
+    task.status = 'running'; task.error = ''; task.text = '';
+    await this.persist(task); const controller = new AbortController(); this.live.set(task.id, { task, controller });
+    void this.execute(task, controller, async () => {
+      let notes = styleNotesText(done, plan.chunks.length);
+      const failed: number[] = [];
+      for (const chunk of plan.chunks) {
+        const index = chunk.index + 1;
+        if (done.has(index)) continue;
+        if (controller.signal.aborted) return 'stop';
+        const messages = [
+          { role: 'system' as const, content: chunkStyleInstruction },
+          { role: 'user' as const, content: '参考文本《' + chunk.name + '》第 ' + index + '/' + plan.chunks.length + ' 段：\n' + chunk.text }
+        ];
+        let piece = ''; let finish = ''; let lastError: unknown = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (controller.signal.aborted) return 'stop';
+          piece = '';
+          try { finish = await streamChat(profile, key, messages, controller.signal, part => { piece += part; }); lastError = null; }
+          catch (error) { if (controller.signal.aborted) return 'stop'; const fatal = fatalStyleRequestError(error); if (fatal) throw new Error(fatal); lastError = error; finish = 'failed'; }
+          if (finish === 'stop' && piece.trim()) break;
+        }
+        if (finish !== 'stop' || !piece.trim()) {
+          if (controller.signal.aborted) return 'stop';
+          failed.push(index);
+          task.error = '模型第 ' + failed.join('、') + ' 段仍未完成';
+          task.styleSource!.analyzed = done.size;
+          await this.persist(structuredClone(task));
+          continue;
+        }
+        done.set(index, piece.trim());
+        notes = styleNotesText(done, plan.chunks.length);
+        task.styleSource!.chunkNotes = [...done.entries()].map(([itemIndex, note]) => ({ index: itemIndex, note }));
+        task.styleSource!.analyzed = done.size;
+        task.text = notes.trim();
+        await this.persist(structuredClone(task));
+      }
+      if (failed.length || !validStyleNotes(task.styleSource!)) throw new Error('模型分段未全部完成：第 ' + failed.join('、') + ' 段失败，已保留完成的分段；未发起汇总');
+      task.text = '';
+      return this.layeredMerge(profile, key, task, notes, controller, part => { task.text += part; });
+    });
+    return structuredClone(task);
+    } finally { this.starting = false; }
+  }
   async confirmStyleLearning(projectId: string, taskId: string, name: string, rules: string, expectedHash: string) {
     z.object({ name: z.string().trim().min(1).max(100), rules: z.string().trim().min(1).max(20000) }).parse({ name, rules });
     const task = await this.find(projectId, taskId);
     if (task.mode !== 'style-analysis' || task.status !== 'complete' || !task.styleSource) throw new Error('请选择本书完整的文风分析任务');
+    if (task.styleSource.mode === 'full' && !validStyleNotes(task.styleSource)) throw new Error('全文分段记录不完整或无法验证覆盖，不能保存为完整文风；原任务已保留');
     parseLearnedStyle(task.text);
     const source = task.styleSource;
     return this.library.acceptModelStyle(projectId, name, rules, source.sourceIds, { taskId: task.id, model: task.connection.model, sourceHashes: source.sourceHashes, sampled: source.sampled, sampleCharacters: source.sampleCharacters, totalCharacters: source.totalCharacters }, source.metrics, expectedHash);

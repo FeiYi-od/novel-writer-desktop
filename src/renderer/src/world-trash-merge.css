@@ -1,0 +1,14 @@
+.book-modal.world-trash-merge { display: flex; flex-direction: column; width: 760px; height: auto; max-height: 88vh; overflow: hidden; padding: 20px 24px; border: 1px solid rgba(255,255,255,.9); border-radius: 24px; background: rgba(247,249,253,.97); box-shadow: 0 24px 70px rgba(43,58,83,.2); }
+.world-trash-merge > header, .world-trash-merge > footer { flex: 0 0 auto; }
+.world-trash-merge-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; }
+.world-trash-merge-body > label { display: grid; gap: 6px; margin: 12px 0; }
+.world-trash-merge select { width: 100%; padding: 9px; border: 1px solid #d5deeb; border-radius: 9px; background: #fff; font: inherit; }
+.world-trash-merge fieldset { min-width: 0; margin: 12px 0; padding: 10px; border: 1px solid #dce4ef; border-radius: 12px; }
+.world-trash-merge-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.world-trash-merge-columns label { min-width: 0; padding: 8px; border-radius: 9px; background: rgba(233, 239, 249, .7); }
+.world-trash-merge-columns label span { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.world-trash-merge-columns input { accent-color: #577bc1; }
+.world-trash-merge-columns pre { max-height: 120px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; user-select: text; }
+.world-trash-merge footer { display: flex; justify-content: flex-end; gap: 10px; }
+.world-trash-merge footer .primary { color: white; background: #5378c3; border-color: #5378c3; }
+.world-trash-merge footer .primary:hover:not(:disabled) { background: #4368b0; }

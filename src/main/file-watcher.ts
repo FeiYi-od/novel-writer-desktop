@@ -19,6 +19,10 @@ export class ChapterWatcher {
       // Drop anything that arrives after the subscription changed.
       if (!name || this.active?.projectId !== projectId) return;
       if (!/\.(docx|txt)$/iu.test(name)) return;
+      // Match Workspace.chapters: metadata and Word lock files are not chapters.
+      // Accept both separators because Windows watcher events can use either.
+      const segments = name.split(/[\\/]/u);
+      if (segments.some(part => part === '小说资料' || part.startsWith('~$'))) return;
       paths.add(name);
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {

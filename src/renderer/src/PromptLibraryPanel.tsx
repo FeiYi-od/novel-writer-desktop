@@ -13,9 +13,10 @@ export function PromptLibraryPanel({ projectId, blocked, onDirty, onClose, onFil
   const [name, setName] = useState(''), [kind, setKind] = useState<PromptTemplateView['kind']>('write'), [body, setBody] = useState('');
   const [selected, setSelected] = useState('');
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [message, setMessage] = useState('');
+  const [audit, setAudit] = useState<{ id: string; name: string; kind: string; versions: number; removedAt: string }[]>([]);
   const dialog = useRef<HTMLElement>(null);
   const dirty = !!snapshot && JSON.stringify(templates) !== JSON.stringify(snapshot.templates);
-  useEffect(() => { let live = true; void window.writer.readPrompts(projectId).then(next => { if (!live) return; setSnapshot(next); setTemplates(next.templates); setSelected(next.templates[0]?.id ?? ''); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [projectId]);
+  useEffect(() => { let live = true; void window.writer.readPrompts(projectId).then(next => { if (!live) return; setSnapshot(next); setTemplates(next.templates); setSelected(next.templates[0]?.id ?? ''); }).catch(e => { if (live) setError(String(e)); }); void window.writer.promptDeletionLog(projectId).then(next => { if (live) setAudit(next.items); }).catch(() => {}); return () => { live = false; }; }, [projectId]);
   useEffect(() => { onDirty(dirty || busy); return () => onDirty(false); }, [dirty, busy, onDirty]);
   useSaveBeforeExit('提示词库', () => ({ dirty, busy, save }));
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(''); setMessage(''); try { await action(); } catch (e) { setError(String(e instanceof Error ? e.message : e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')); } finally { setBusy(false); } };
@@ -30,6 +31,7 @@ export function PromptLibraryPanel({ projectId, blocked, onDirty, onClose, onFil
     setSelected(keep?.id ?? '');
     onDirty(false);
     setMessage('提示词库已保存');
+    void window.writer.promptDeletionLog(projectId).then(next => setAudit(next.items)).catch(() => {});
   }
   const add = () => { const clean = name.trim(); if (!clean || !body.trim()) { setError('请填写模板名称与内容'); return; } setTemplates(current => [...current, { id: `pending-${Date.now()}`, name: clean, kind, body, version: 1, updatedAt: '', versions: [] }]); setName(''); setBody(''); setError(''); };
   const current = templates.find(item => item.id === selected);
@@ -55,6 +57,7 @@ export function PromptLibraryPanel({ projectId, blocked, onDirty, onClose, onFil
         {current.versions.length > 0 && <details open><summary>历史版本（{current.versions.length}）</summary><ul className="prompt-versions">{current.versions.map(version => <li key={version.version}><strong>v{version.version}</strong><pre>{version.body}</pre><button type="button" disabled={busy || blocked} onClick={() => updateBody(version.body)}>恢复这一版</button></li>)}</ul></details>}
       </> : <p>左侧选一个模板，或先新建。</p>}</article>
     </div>
+    <details className="prompt-audit" data-testid="prompt-audit"><summary>删除记录（{audit.length}）</summary>{audit.length ? <ul>{audit.slice(-20).reverse().map(item => <li key={item.id + item.removedAt}>{item.name} · {item.kind} · v{item.versions} · {new Date(item.removedAt).toLocaleString('zh-CN')}</li>)}</ul> : <p>还没有删除过模板。</p>}<p><small>删除记录只用于追溯；模板内容删除后不在其中，历史版本随模板一起移除。</small></p></details>
     <footer><span>{dirty ? '有未保存改动' : '已保存'}</span><div><button disabled={busy} onClick={onClose}>关闭</button><button className="primary" data-testid="prompt-save" disabled={busy || blocked || !dirty} onClick={() => void run(save)}>保存提示词库</button></div></footer>
   </section></div>;
 }

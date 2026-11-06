@@ -10,9 +10,10 @@ import { ChapterSearch, chapterSearchKey, emptySearch, type ChapterSearchState, 
 
 const ParagraphSpaces = Extension.create({ name: 'paragraphSpaces', addProseMirrorPlugins: () => [paragraphSpacesPlugin()] });
 
-export function ManuscriptEditor({ content, disabled, active = true, plainText = false, onChange, onReady, jump }: {
+export function ManuscriptEditor({ content, disabled, active = true, plainText = false, onChange, onReady, jump, onMakeEditable }: {
   content: RichNode | string; disabled: boolean; active?: boolean; plainText?: boolean; onChange: (json: RichNode, text: string) => void;
   onReady: (json: RichNode, text: string) => void;
+  onMakeEditable?: () => void;
   /** Cross-chapter jump: put the caret on the first occurrence of this text and scroll to it. */
   jump?: { text: string; token: number } | null;
 }) {
@@ -23,7 +24,7 @@ export function ManuscriptEditor({ content, disabled, active = true, plainText =
   const queryInput = useRef<HTMLInputElement>(null);
   const editor = useEditor({
     extensions: [StarterKit.configure({
-      heading: { levels: [1, 2, 3] }, blockquote: false, bulletList: false, orderedList: false,
+      heading: plainText ? false : { levels: [1, 2, 3] }, bold: plainText ? false : {}, italic: plainText ? false : {}, blockquote: false, bulletList: false, orderedList: false,
       listItem: false, listKeymap: false, code: false, codeBlock: false, horizontalRule: false,
       strike: false, link: false, underline: false, trailingNode: false
     }), ParagraphSpaces, ChapterSearch],
@@ -100,13 +101,14 @@ export function ManuscriptEditor({ content, disabled, active = true, plainText =
   if (!editor) return null;
   return <>
     <div className="toolbar" aria-label="正文格式">
+      {onMakeEditable && <button className="begin-edit-copy" data-testid="begin-edit-copy" onClick={onMakeEditable}>开始编辑（另存 DOCX 副本）</button>}
       <span>宋体</span><span>五号 · 10.5 磅</span><i />
       <button disabled={disabled || plainText} onClick={() => editor.chain().focus().toggleBold().run()} title="粗体 Ctrl+B"><b>B</b></button>
       <button disabled={disabled || plainText} onClick={() => editor.chain().focus().toggleItalic().run()} title="斜体 Ctrl+I"><em>I</em></button>
       <button disabled={disabled} onClick={() => editor.chain().focus().setParagraph().run()}>正文</button>
       <button disabled={disabled || plainText} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>标题</button>
-      <i /><button disabled={disabled} onClick={() => editor.chain().focus().undo().run()}>撤销</button>
-      <button disabled={disabled} onClick={() => editor.chain().focus().redo().run()}>重做</button>
+      <i /><button disabled={disabled} title="撤销 Ctrl+Z" onClick={() => editor.chain().focus().undo().run()}>撤销</button>
+      <button disabled={disabled} title="重做 Ctrl+Y / Ctrl+Shift+Z" onClick={() => editor.chain().focus().redo().run()}>重做</button>
       <button aria-expanded={searchOpen} onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }} title="查找 Ctrl+F / 替换 Ctrl+H">查找替换</button>
       <span className="toolbar-note">段首两个可复制全角空格</span>
     </div>

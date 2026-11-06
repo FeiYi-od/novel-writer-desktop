@@ -19,7 +19,14 @@ export interface Project {
   root: string;
 }
 
-export interface Chapter { path: string; name: string }
+export interface TrashedChapter { id: string; name: string; originalPath: string; deletedAt: string; bytes: number }
+export interface ChapterSplitPlan extends ChapterImportPlan { rule: string }
+export interface ChapterImportPlanItem { id: string; sourceName: string; targetName: string; kind: "docx" | "txt"; bytes: number; duplicate: boolean }
+export interface ChapterImportPlan { token: string; items: ChapterImportPlanItem[]; skipped: { name: string; reason: string }[] }
+export interface ChapterImportDecision { id: string; include: boolean; targetName?: string }
+export interface CreateProjectResult { project: Project; chapter: Manuscript | null; root: string }
+export interface ChapterImportFile { name: string; data: Uint8Array }
+export interface ChapterImportResult { imported: { name: string; path: string }[]; skipped: { name: string; reason: string }[] }export interface Chapter { path: string; name: string }
 export interface ChapterOrderSnapshot { value: { schemaVersion: 1; projectId: string; paths: string[] }; hash: string; entries: (Chapter & { present: boolean })[] }
 export interface Manuscript {
   projectId: string;
@@ -144,6 +151,8 @@ export interface WriterApi {
   summaryBatch(projectId: string): Promise<SummaryBatchState | null>;
   cancelSummaryBatch(projectId: string): Promise<void>;
   confirmSummary(projectId: string, taskId: string, content: string, expectedHash: string): Promise<StoryMemorySnapshot>;
+  /** 批量删除章节摘要条目（一次校验、一次写入）。 */
+  removeMemoryEntries(projectId: string, entryIds: string[], expectedHash: string): Promise<StoryMemorySnapshot>;
   updateMemory(projectId: string, entryId: string, enabled: boolean, important: boolean, expectedHash: string): Promise<StoryMemorySnapshot>;
   saveStoryFact(projectId: string, edit: StoryFactEdit, expectedHash: string): Promise<StoryMemorySnapshot>;
   removeStoryFact(projectId: string, factId: string, expectedHash: string): Promise<StoryMemorySnapshot>;
@@ -177,6 +186,23 @@ export interface WriterApi {
   reviewDecisions(projectId: string, taskId: string): Promise<ReviewDecisionSnapshot>;
   setReviewDecision(request: ReviewDecisionRequest): Promise<ReviewDecisionSnapshot>;
   readCharacters(projectId: string): Promise<CharacterSnapshot>;
+  /** 从文字设定提取候选（不落库）。 */
+  /** 选择 DOCX/TXT 设定文件并返回纯文本（不落库）。 */
+  readSettingFile(): Promise<{ name: string; text: string } | null>;
+  /** 用模型整理设定（一次性返回候选，不落库；确认仍走 confirmSettingCandidates）。 */
+  modelSettingCandidates(projectId: string, connectionId: string, text: string, template: 'character' | 'world' | 'both'): Promise<{ token: string; candidates: { id: string; kind: 'character' | 'world'; name: string; fields: Record<string, string>; source: string; missing: string[] }[] }>;
+  prepareBookSettings(projectId: string, chunkCharacters: number, selectedPaths?: string[]): Promise<{ token: string; chapters: number; availableChapters: number; chapterPaths: string[]; characters: number; chunks: number; chunkCharacters: number }>;
+  modelBookSettings(projectId: string, token: string, connectionId: string, template: 'character' | 'world' | 'both', requestId: string, retryFailed: boolean, persist: boolean): ReturnType<WriterApi['modelSettingCandidates']>;
+  readBookSettingsCheckpoint(projectId: string): Promise<{ hash: string; completed: number; total: number; chapters: string[]; connectionId: string; template: 'character' | 'world' | 'both'; updatedAt: string } | null>;
+  restoreBookSettingsCheckpoint(projectId: string, hash: string): Promise<Awaited<ReturnType<WriterApi['prepareBookSettings']>> & { completed: number; connectionId: string; template: 'character' | 'world' | 'both' }>;
+  discardBookSettingsCheckpoint(projectId: string, hash: string): Promise<void>;
+  inspectBookSettingsCheckpointFile(projectId: string): Promise<{ hash: string; bytes: number }>;
+  quarantineBookSettingsCheckpoint(projectId: string, hash: string): Promise<{ backup: string; hash: string; bytes: number }>;
+  cancelBookSettings(projectId: string, requestId: string): Promise<boolean>;
+  onBookSettingsProgress(listener: (progress: { projectId: string; requestId: string; completed: number; total: number; phase: 'preparing' | 'processing' | 'retrying' }) => void): () => void;
+  previewSettingCandidates(projectId: string, text: string): Promise<{ token: string; candidates: { id: string; kind: 'character' | 'world'; name: string; fields: Record<string, string>; source: string }[] }>;
+  /** 确认候选：写入人物卡/世界书；mode=merge 时追加到同名人物卡。 */
+  confirmSettingCandidates(projectId: string, token: string, selections: { id: string; mode?: 'new' | 'merge'; fields?: Record<string, string> }[]): Promise<{ characters: string[]; world: { name: string; entries: number } | null }>;
   previewCharacter(projectId: string, kind: 'image' | 'text'): Promise<CharacterPreview | null>;
   chooseCharacterPortrait(projectId: string): Promise<{ token: string; image: string } | null>;
   saveCharacter(projectId: string, edit: CharacterEdit, expectedHash: string): Promise<CharacterSnapshot>;
@@ -185,12 +211,59 @@ export interface WriterApi {
   saveBook(projectId: string, value: BookDetails, expectedHash: string): Promise<BookSnapshot>;
   importCover(projectId: string): Promise<{ asset: string; dataUrl: string } | null>;
   importStyleSources(projectId: string, expectedHash: string): Promise<BookSnapshot | null>;
-  analyzeStyle(projectId: string, name: string, sourceIds: string[], expectedHash: string): Promise<BookSnapshot>;
   startStyleLearning(request: StyleLearningRequest): Promise<AITask>;
   confirmStyleLearning(projectId: string, taskId: string, name: string, rules: string, expectedHash: string): Promise<BookSnapshot>;
   copyText(text: string): Promise<void>;
   listProjects(): Promise<Project[]>;
+  folderRenameStatus(): Promise<string>;
+  renameProjectFolder(request: { projectId: string; expectedRoot: string; name: string }): Promise<Project>;
   openProject(): Promise<Project | null>;
+  /** 在应用内新建小说：父目录 + 书名 → 新项目（可选首章）。同名目录会被拒绝。 */
+  createProject(parent: string, title: string, firstChapter?: boolean): Promise<CreateProjectResult>;
+  /** 新建向导用：只挑封面图，返回 base64 与预览地址，不写任何项目。 */
+  pickCoverImage(): Promise<{ base64: string; dataUrl: string } | null>;
+  /** 新书初始化：写入引言与封面（封面来自 pickCoverImage）。 */
+  initializeBook(projectId: string, options: { introduction?: string; coverBase64?: string }): Promise<BookSnapshot>;
+  /** 选择新小说的存放父目录（可新建）。 */
+  pickProjectParent(): Promise<string | null>;
+  /** 打开文件选择器导入章节副本，返回导入与跳过清单。 */
+  importChapters(projectId: string): Promise<ChapterImportResult>;
+  /** 打开文件选择器并生成导入预览（不写盘）。 */
+  planChaptersImport(projectId: string): Promise<ChapterImportPlan>;
+  /** 选择整本 TXT 并按标题行生成拆章预览（不写盘）。 */
+  planTextSplit(projectId: string): Promise<ChapterSplitPlan>;
+  /** 删除参考文本；仍被文风档案引用时拒绝并给出档案名。 */
+  removeStyleSources(projectId: string, sourceIds: string[], expectedHash: string): Promise<{ removed: number; names: string[]; snapshot: BookSnapshot }>;
+  /** 删除文风档案；删到当前启用档案时清空选择。 */
+  removeStyle(projectId: string, styleId: string, expectedHash: string): Promise<{ name: string; snapshot: BookSnapshot }>;
+  /** 删除模型连接；历史任务会提示连接不存在，不会静默换用其它连接。 */
+  removeAIConnection(id: string, expectedHash: string): Promise<AIConnectionSnapshot>;
+  /** 删除朱雀检测连接（与写作模型分开保存）。 */
+  removeDetectorConnection(id: string, expectedHash: string): Promise<AIConnectionSnapshot>;
+  /** 删除已结束的 AI 任务记录；运行中/被审稿引用时拒绝。 */
+  /** 批量删除任务记录（多模型审稿等）：整体校验，任一不可删则全部不动。 */
+  removeAITasks(projectId: string, taskIds: string[]): Promise<{ removed: string[] }>;
+  removeAITask(projectId: string, taskId: string): Promise<void>;
+  /** 全文分段开始前预估：段数、字符范围与预计调用次数（不含汇总以外的额外调用）。 */
+  /** 从断点继续全文分段分析（核对来源哈希与分块参数）。 */
+  resumeStyleLearning(projectId: string, taskId: string): Promise<AITask>;
+  previewStyleChunks(projectId: string, sourceIds: string[], expectedHash: string, connectionId: string): Promise<{ chunks: number; chunkCharacters: number; totalCharacters: number; estimatedRequests: number; largestChunkCharacters: number; smallestChunkCharacters: number; modelName: string; model: string; planFingerprint: string }>;
+  /** 本地文风分析：mode=full 时按字符预算分段覆盖全文。 */
+  analyzeStyle(projectId: string, name: string, sourceIds: string[], expectedHash: string, options?: { mode?: "sample" | "full"; chunkCharacters?: number }): Promise<BookSnapshot>;
+  /** 标记参考文本的作者/作品，用于同作者多作品分组与合并。 */
+  labelStyleSource(projectId: string, sourceId: string, label: { author?: string; work?: string }, expectedHash: string): Promise<BookSnapshot>;
+  /** 把多个文风档案合并成一份作者文风（等权或按有效字数加权），保留来源与权重。 */
+  mergeStyles(projectId: string, name: string, styleIds: string[], mode: "equal" | "characters", expectedHash: string): Promise<BookSnapshot>;
+  /** 合并前对比：共同规则、各档案独有规则与指标区间（只读）。 */
+  /** 从另一本小说导入文风档案（复制来源文件，目标书独立记录）。 */
+  importStyleFromBook(sourceProjectId: string, targetProjectId: string, styleId: string, expectedHash: string): Promise<{ snapshot: BookSnapshot; styleId: string; copiedSources: number }>;
+  compareStyleArchives(projectId: string, styleIds: string[]): Promise<{ shared: string[]; perStyle: { id: string; name: string; unique: string[]; metrics: { meanSentenceLength: number; meanParagraphLength: number; dialogueRatio: number; firstPersonPerThousand: number; characters: number } }[]; ranges: { sentenceLength: { min: number; max: number }; paragraphLength: { min: number; max: number }; dialogueRatio: { min: number; max: number } } }>;
+  /** 删除章节到本书回收站（可恢复），不直接抹掉文件。 */
+  deleteChapter(projectId: string, path: string, expectedHash: string): Promise<TrashedChapter>;
+  trashedChapters(projectId: string): Promise<TrashedChapter[]>;
+  restoreTrashedChapter(projectId: string, id: string): Promise<Manuscript>;
+  /** 按预览里的改名/排除决定提交导入。 */
+  commitChaptersImport(projectId: string, token: string, decisions: ChapterImportDecision[]): Promise<ChapterImportResult>;
   /** Removes only this device's bookshelf association; all author files remain. */
   removeProject(projectId: string): Promise<void>;
   chapters(projectId: string): Promise<Chapter[]>;
@@ -199,6 +272,8 @@ export interface WriterApi {
   createChapter(projectId: string, format?: 'docx' | 'txt'): Promise<Manuscript>;
   readChapter(projectId: string, path: string): Promise<Manuscript>;
   renameChapter(request: RenameChapterRequest): Promise<Manuscript>;
+  chapterDisplayNames(projectId: string): Promise<{ entries: { path: string; name: string }[]; hash: string }>;
+  setChapterDisplayName(request: { projectId: string; path: string; expectedChapterHash: string; expectedNamesHash: string; name: string }): Promise<{ entries: { path: string; name: string }[]; hash: string }>;
   /** Moves a chapter into another folder of this novel; refusals never touch the file. */
   moveChapter(request: { projectId: string; path: string; expectedHash: string; folder: string }): Promise<string>;
   previewBookReplace(request: { projectId: string; query: string; replacement: string; caseSensitive?: boolean }): Promise<ReplaceOutcome>;
@@ -211,6 +286,8 @@ export interface WriterApi {
   readCharacterStates(projectId: string): Promise<CharacterStateSnapshotView>;
   saveCharacterStates(projectId: string, states: CharacterStateView[], expectedHash: string): Promise<CharacterStateSnapshotView>;
   readPrompts(projectId: string): Promise<PromptSnapshotView>;
+  /** 提示词删除审计（最近 200 条）。 */
+  promptDeletionLog(projectId: string): Promise<{ items: { id: string; name: string; kind: 'write' | 'review' | 'planning' | 'other'; versions: number; removedAt: string }[]; hash: string }>;
   savePrompts(projectId: string, templates: PromptTemplateView[], expectedHash: string): Promise<PromptSnapshotView>;
   readBlueprints(projectId: string): Promise<BlueprintSnapshotView>;
   saveBlueprints(projectId: string, nodes: BlueprintNodeView[], expectedHash: string): Promise<BlueprintSnapshotView>;
@@ -223,6 +300,14 @@ export interface WriterApi {
   cancelMacroPreview(projectId: string, requestId: string): Promise<boolean>;
   importMacroScripts(projectId: string): Promise<MacroImportResult | null>;
   listWorldBooks(projectId: string): Promise<{ name: string; entries: number; keys: number; hash?: string; error?: string }[]>;
+  readWorldBook(projectId: string, name: string): Promise<{ name: string; hash: string; container: 'object' | 'array'; entries: { id: string; comment: string; content: string; keys: string[]; secondaryKeys: string[]; disabled: boolean; constant: boolean }[] }>;
+  saveWorldEntry(request: WorldCardEditRequest): Promise<{ hash: string; backup: string }>;
+  deleteWorldEntry(request: { projectId: string; book: string; entryId: string; expectedHash: string }): Promise<{ hash: string; backup: string; trashId: string }>;
+  listWorldEntryTrash(projectId: string): Promise<{ items: { id: string; book: string; entryId: string; name: string; removedAt: string; container: 'object' | 'array'; hash: string }[]; errors: string[] }>;
+  previewWorldEntryTrash(request: { projectId: string; trashId: string; expectedHash: string }): Promise<{ id: string; book: string; entryId: string; comment: string; content: string; keys: string[] }>;
+  mergeWorldEntryTrash(request: { projectId: string; trashId: string; expectedTrashHash: string; targetEntryId: string; expectedBookHash: string; fields: { comment: 'current' | 'backup'; content: 'current' | 'backup'; keys: 'current' | 'backup' } }): Promise<{ hash: string; backup: string; book: string }>;
+  purgeWorldEntryTrash(request: { projectId: string; trashId: string; expectedHash: string }): Promise<void>;
+  restoreWorldEntry(request: { projectId: string; trashId: string; expectedHash: string; mode?: 'original' | 'append' }): Promise<{ hash: string; backup: string; book: string }>;
   importWorldBook(projectId: string): Promise<{ name: string; entries: number } | null>;
   removeWorldBook(projectId: string, name: string, expectedHash: string): Promise<boolean>;
   previewWorldInfo(projectId: string, names: string[], text: string, characterNames?: string[]): Promise<{ id: string; book: string; keys: string[]; secondaryKeys: string[]; content: string; comment: string; selective: boolean; selectiveLogic: 'AND_ANY' | 'NOT_ALL' | 'NOT_ANY' | 'AND_ALL'; constant: boolean; disabled: boolean; order: number; position: 'before_char' | 'after_char' | 'at_depth'; depth: number | null; probability: number; caseSensitive: boolean }[]>;
@@ -275,12 +360,15 @@ export interface RecoveryEntry { schemaVersion: 1; id: string; projectId: string
 export interface RecoveryDraft extends RecoveryEntry { content: RichNode }
 
 export interface Volume { id: string; title: string; introduction: string; cover: string; chapters: string[] }
-export interface StyleSource { id: string; name: string; characters: number; format?: 'docx' | 'txt' }
+export interface StyleSource { id: string; name: string; characters: number; format?: 'docx' | 'txt'; author?: string; work?: string }
 export interface LearnedStyle {
   id: string; name: string; rules: string; sourceIds: string[]; createdAt: string;
   method: 'local-statistics-v1' | 'model-analysis-v1';
   analysis?: { taskId: string; model: string; sourceHashes: Record<string, string>; sampled: boolean; sampleCharacters: number; totalCharacters: number };
   metrics: { characters: number; paragraphs: number; meanSentenceLength: number; meanParagraphLength: number; dialogueRatio: number; firstPersonPerThousand: number };
+  /** 全文分段分析的覆盖记录；采样或旧档案没有这一项。 */
+  mergedFrom?: { styleIds: string[]; mode: 'equal' | 'characters'; weights: Record<string, number> };
+  coverage?: { mode: 'full' | 'sample'; characters: number; chunks: number; chunkCharacters: number; sentenceLength: { min: number; max: number }; dialogueRatio: { min: number; max: number } };
 }
 export interface BookDetails {
   schemaVersion: 1; projectId: string; title: string; introduction: string; cover: string;
@@ -293,6 +381,7 @@ export interface CharacterFields {
   firstMessage: string; examples: string; creatorNotes: string; systemPrompt: string;
   postHistoryInstructions: string; alternateGreetings: string[];
 }
+export interface WorldCardEditRequest { projectId: string; book: string; entryId: string; expectedHash: string; comment: string; content: string; keys: string[] }
 export interface CharacterCard extends CharacterFields {
   id: string; projectId: string; enabled: boolean; portrait: string;
   source: { name: string; format: string; original: string };
@@ -324,7 +413,7 @@ export interface AIConnectionSnapshot { connections: AIConnection[]; hash: strin
 export interface AuxiliaryModelConnection { id: string; kind: 'embedding' | 'rerank'; name: string; type: string; parameters: Record<string, string | number | boolean>; hasKey: boolean }
 export interface AuxiliaryModelEdit extends Omit<AuxiliaryModelConnection, 'id' | 'hasKey'> { id?: string; apiKey?: string; clearKey?: boolean }
 export interface AuxiliaryModelSnapshot { connections: AuxiliaryModelConnection[]; hash: string }
-export type UiDraftPage = 'planning' | 'materials' | 'characters' | 'summary' | 'style';
+export type UiDraftPage = 'planning' | 'materials' | 'characters' | 'summary' | 'style' | 'world-card';
 export interface ReplaceChapterResult { path: string; count: number; status: 'replaced' | 'unchanged' | 'skipped'; message?: string }
 export interface ReplaceOutcome { chapters: ReplaceChapterResult[]; total: number; replacedFiles: number; batchId?: string }
 export interface TimelineEntryView { id: string; when: string; title: string; note: string; chapterPath?: string }
@@ -422,7 +511,7 @@ export interface AITask {
   reviewFormat?: 'text' | 'issues';
   /** Hash of the normalized managed document reviewed directly, excluding AI candidates. */
   reviewDocumentHash?: string;
-  styleSource?: { name: string; sourceIds: string[]; sourceHashes: Record<string, string>; sampled: boolean; sampleCharacters: number; totalCharacters: number; metrics: LearnedStyle['metrics'] };
+  styleSource?: { name: string; sourceIds: string[]; sourceHashes: Record<string, string>; sampled: boolean; sampleCharacters: number; totalCharacters: number; metrics: LearnedStyle['metrics']; mode?: 'sample' | 'full'; chunks?: number; chunkCharacters?: number; analyzed?: number; planHash?: string; planVersion?: 2; connectionSalt?: string; connectionFingerprint?: string; layers?: number; layerNotes?: string[]; mergeLevels?: string[][]; chunkNotes?: { index: number; note: string }[] };
   autoReview?: AIAutoReview;
   /** Ordered independent review results; legacy tasks retain autoReview. */
   autoReviews?: AIAutoReview[];
@@ -431,7 +520,7 @@ export interface AITask {
   /** What automatic retrieval actually did for this task, including any honest degradation. */
   autoRetrieval?: { requested: string; used: string; hits: number; warning: string };
 }
-export interface StyleLearningRequest { projectId: string; connectionId: string; name: string; sourceIds: string[]; expectedHash: string }
+export interface StyleLearningRequest { projectId: string; connectionId: string; name: string; sourceIds: string[]; expectedHash: string; mode?: "sample" | "full"; chunkCharacters?: number; expectedPlanFingerprint?: string }
 export interface MaterialAIRequest { projectId: string; connectionId: string; kind: 'character' | 'world'; sourceName: string; sourceText: string }
 export interface SummaryRequest { projectId: string; connectionId: string; chapterPath: string; sourceHash: string }
 /** Batch summaries run one chapter at a time; each result still needs author confirmation. */

@@ -65,7 +65,7 @@ async function main() {
   };
   const exitNormally = async () => { const closing = app!.waitForEvent('close'); await page.getByRole('button', { name: '保存并退出', exact: true }).click(); await closing; app = null; };
   const readDecisions = (task: AITask) => page.evaluate(({ projectId, id }) => window.writer.reviewDecisions(projectId, id), task);
-  const history = () => page.locator('.ai-history > button');
+  const history = () => page.locator('.ai-history button');
   const reread = () => page.getByRole('button', { name: '重新读取处理状态', exact: true }).click();
   try {
     await launch(); const projectA = await open(bookA);

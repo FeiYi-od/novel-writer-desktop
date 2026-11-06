@@ -1,0 +1,67 @@
+/* Shared editorial surfaces for authoring, review and reference pages. */
+.ai-page:not(.model-settings-page), .characters-page { color: #253348; }
+.ai-page:not(.model-settings-page) .ai-heading h1,
+.characters-page .page-title h1 { color: #202530; font-family: inherit; font-weight: 650; letter-spacing: -.025em; }
+.ai-page:not(.model-settings-page) .ai-heading small,
+.characters-page .eyebrow { color: #627293; letter-spacing: .14em; }
+.ai-page:not(.model-settings-page) .ai-heading p,
+.characters-page .page-title p, .characters-page .page-title h1 span { color: #59687d; line-height: 1.7; }
+.ai-page:not(.model-settings-page) .ai-panel,
+.characters-page .character-card {
+  min-width: 0; border: 1px solid rgba(255,255,255,.96); border-radius: 22px;
+  background: rgba(252,253,255,.93); box-shadow: 0 9px 28px rgba(43,54,85,.07), inset 0 1px 0 #fff;
+}
+.ai-page:not(.model-settings-page) .ai-panel h2,
+.characters-page .character-info h2 { color: #253348; }
+.characters-page .studio-badge, .style-page .studio-badge { color: #4d5e75; border-color: #d5dfed; background: #eef3fa; }
+.characters-page .character-card.enabled { border-color: #a3b5d0; background: #f4f8ff; }
+.characters-page .character-context { border-color: #dce4ef; border-radius: 14px; background: #f5f8fd; }
+.characters-page .character-context summary { color: #40516a; }
+.characters-page .character-empty { color: #59687d; }
+.ai-page:not(.model-settings-page) .ai-form label,
+.characters-page .character-info > p { color: #40516a; }
+.ai-page:not(.model-settings-page) .ai-form input:not([type=checkbox]):not([type=radio]),
+.ai-page:not(.model-settings-page) .ai-form select,
+.ai-page:not(.model-settings-page) .ai-form textarea,
+.characters-page .character-toolbar > input {
+  min-width: 0; border: 1px solid #ccd6e5; border-radius: 11px; background: #fff; color: #26364b;
+}
+.ai-page:not(.model-settings-page) .ai-form input::placeholder,
+.ai-page:not(.model-settings-page) .ai-form textarea::placeholder { color: #6e7d91; }
+.ai-page:not(.model-settings-page) .ai-panel .actions { flex-wrap: wrap; gap: 8px; }
+.ai-page:not(.model-settings-page) .ai-panel .actions button,
+.characters-page .character-toolbar button { min-height: 36px; border-radius: 10px; }
+.planning-page .planning-tabs {
+  gap: 4px; padding: 5px; width: min(100%, 920px); border: 1px solid rgba(255,255,255,.95);
+  border-radius: 17px; background: rgba(229,235,245,.82); box-shadow: inset 0 1px 0 #fff, 0 4px 16px rgba(43,54,85,.06);
+}
+.planning-page .planning-tabs button { flex: 1 1 auto; min-height: 38px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: #3e4b60; }
+.planning-page .planning-tabs button.active { color: #1c2a3e; background: #fff; border-color: #fff; box-shadow: 0 3px 10px rgba(43,54,85,.12); }
+.ai-writing-page .ai-review-queue, .ai-writing-page .ai-citation-selection,
+.ai-writing-page .review-issue { border-color: #dce4ef; background: #f9fbff; }
+.ai-writing-page .ai-result pre, .planning-page .material-output, .materials-page .material-output { background: #f7f9fd; border-color: #e1e7f1; color: #26364b; }
+.ai-page:not(.model-settings-page) button:focus-visible,
+.ai-page:not(.model-settings-page) input:focus-visible,
+.ai-page:not(.model-settings-page) select:focus-visible,
+.ai-page:not(.model-settings-page) textarea:focus-visible,
+.ai-page:not(.model-settings-page) summary:focus-visible,
+.characters-page button:focus-visible, .characters-page input:focus-visible,
+.characters-page textarea:focus-visible, .characters-page summary:focus-visible { outline: 2px solid #4663a1; outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .planning-page .planning-tabs button:not(.active):hover { background: rgba(255,255,255,.62); }
+}
+@media (forced-colors: active) {
+  .ai-page:not(.model-settings-page) .ai-panel, .characters-page .character-card,
+  .planning-page .planning-tabs, .ai-writing-page .ai-review-queue,
+  .ai-writing-page .ai-citation-selection, .ai-writing-page .review-issue {
+    background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none; backdrop-filter: none;
+  }
+  .planning-page .planning-tabs button.active { background: Highlight; color: HighlightText; border-color: Highlight; }
+  .ai-page:not(.model-settings-page) button:focus-visible,
+  .ai-page:not(.model-settings-page) input:focus-visible,
+  .ai-page:not(.model-settings-page) select:focus-visible,
+  .ai-page:not(.model-settings-page) textarea:focus-visible,
+  .ai-page:not(.model-settings-page) summary:focus-visible,
+  .characters-page button:focus-visible, .characters-page input:focus-visible,
+  .characters-page textarea:focus-visible, .characters-page summary:focus-visible { outline-color: Highlight; }
+}

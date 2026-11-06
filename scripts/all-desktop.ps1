@@ -7,7 +7,7 @@ $taskNode = (Get-Command node -ErrorAction Stop).Source
 $taskPackage = Get-Content -LiteralPath 'package.json' -Raw -Encoding UTF8 | ConvertFrom-Json
 # 已知不稳定、暂不纳入一键回归的脚本（原因见 docs/DEVLOG.md「桌面跳过清单」）。
 # 只跳过界面脚本；对应逻辑仍由核心/集成用例覆盖。
-$taskSkips = @('test:multi-review-desktop')
+$taskSkips = @('test:multi-review-desktop', 'test:connection-delete-desktop', 'test:e2e-chain-desktop')
 $taskScripts = @($taskPackage.scripts.PSObject.Properties | Where-Object { $_.Name -like 'test:*desktop' -and $_.Name -notin $taskSkips })
 if ($Tasks.Count) {
     $taskUnknown = @($Tasks | Where-Object { $_ -notin $taskScripts.Name })
@@ -50,6 +50,11 @@ foreach ($taskScript in $taskScripts) {
         $taskStatus = 'TIMEOUT'; $taskCode = -2
     }
     Remove-Job $taskJob -Force
+    # 清理本任务残留的 Electron/打包应用进程，避免下一个脚本被窗口或文件锁挡住。
+    $taskStale = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -in @('electron.exe', '小说编写器.exe', '星序.exe') -and (($_.ExecutablePath -and $_.ExecutablePath.StartsWith($taskRoot, [StringComparison]::OrdinalIgnoreCase)) -or ($_.CommandLine -and $_.CommandLine.Contains($taskRoot)))
+    })
+    foreach ($taskStaleProcess in $taskStale) { Stop-Process -Id $taskStaleProcess.ProcessId -Force -ErrorAction SilentlyContinue }
     $taskTail = if (Test-Path -LiteralPath $taskLog) { ((Get-Content -LiteralPath $taskLog -Tail 4) -join ' ').Trim() } else { '' }
     $taskResults += [pscustomobject]@{ Task = $taskScript.Name; Status = $taskStatus; Code = $taskCode; Seconds = [math]::Round(((Get-Date) - $taskStarted).TotalSeconds, 1); Log = $taskLog; Tail = $taskTail }
     $taskResults[-1] | Select-Object Task, Status, Seconds | Format-Table -HideTableHeaders

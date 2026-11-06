@@ -83,6 +83,21 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $zipParent = Split-Path -Parent $zipPath
 if (-not (Test-Path -LiteralPath $zipParent)) { New-Item -ItemType Directory -Path $zipParent -Force | Out-Null }
-Compress-Archive -Path (Join-Path $target '*') -DestinationPath $zipPath -CompressionLevel Optimal
+# Compress-Archive 在本机 PowerShell 里会把条目名写成反斜杠（不合 ZIP 规范，JSZip/其它工具读不到）；
+# 用 .NET 的 CreateFromDirectory 保证条目用正斜杠。
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory($target, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+# .NET Framework 的 CreateFromDirectory 同样写反斜杠；重写条目名，保证跨平台解压正确。
+$zipArchive = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Update)
+try {
+  foreach ($entry in @($zipArchive.Entries | Where-Object { $_.FullName.Contains('\') })) {
+    $fixedName = $entry.FullName.Replace('\', '/')
+    $buffer = New-Object System.IO.MemoryStream
+    $sourceStream = $entry.Open(); $sourceStream.CopyTo($buffer); $sourceStream.Dispose()
+    $replacement = $zipArchive.CreateEntry($fixedName, [System.IO.Compression.CompressionLevel]::Optimal)
+    $destinationStream = $replacement.Open(); $buffer.Position = 0; $buffer.CopyTo($destinationStream)
+    $destinationStream.Dispose(); $buffer.Dispose(); $entry.Delete()
+  }
+} finally { $zipArchive.Dispose() }
 Write-Host ("Portable build ready: " + $target)
 Write-Host ("Zip: " + $zipPath)

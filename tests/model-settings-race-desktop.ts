@@ -35,7 +35,7 @@ async function main() {
       };
     }, { file, external });
     await page.getByRole('button', { name: '保存模型连接', exact: true }).click();
-    await page.getByText(/AI 连接文件在保存期间被修改/u).first().waitFor();
+    await page.getByRole('alert').filter({ hasText: /AI 连接文件在保存期间被修改/u }).waitFor();
     assert.equal(await app.evaluate(() => Boolean((globalThis as any).__settingsRaceInjected)), true);
     assert.equal(await fs.readFile(file, 'utf8'), external, '必须保留外部修改');
     assert.equal(await fs.readFile(`${file}.backup`, 'utf8'), previous, '换前备份应保留');

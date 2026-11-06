@@ -22,6 +22,8 @@
 }
 .workspace .paper-scroll { background: #f8f9f5; }
 .workspace .toolbar { border-top-color: #e8ebe4; border-bottom-color: #e8ebe4; }
+.workspace .toolbar button.begin-edit-copy { padding: 7px 10px; border: 1px solid #8ca2bc; border-radius: 9px; background: #e1eaf5; color: #29425f; font-weight: 600; }
+.workspace .toolbar button.begin-edit-copy:hover:not(:disabled) { background: #d1deed; }
 .workspace .inspector-heading h2 { color: #304a36; }
 .welcome .welcome-mark { width: 80px; height: 80px; border: 0; border-radius: 24px; background: transparent; transform: none; }
 .welcome .welcome-mark img { display: block; width: 80px; height: 80px; }

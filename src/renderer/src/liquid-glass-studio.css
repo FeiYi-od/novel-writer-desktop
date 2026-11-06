@@ -1,0 +1,45 @@
+/* The studio uses the same glass family as the shelf and model settings. */
+.style-page { color: #202a39; }
+.style-page .page-title h1 { color: #202530; font-family: inherit; font-weight: 650; letter-spacing: -.025em; }
+.style-page .page-title p, .style-page .page-title h1 span, .style-page .studio-badge { color: #59687d; }
+.style-page .eyebrow { color: #627293; letter-spacing: .14em; }
+.style-page .studio-layout { gap: 18px; align-items: start; }
+.style-page .source-panel, .style-page .style-card, .style-page .style-learning-panel {
+  border: 1px solid rgba(255,255,255,.96); border-radius: 22px;
+  background: rgba(252,253,255,.93); box-shadow: 0 9px 28px rgba(43,54,85,.07), inset 0 1px 0 #fff;
+}
+.style-page .panel-heading h2, .style-page .analyze-form h2, .style-page .style-learning-panel h2 { color: #253348; }
+.style-page .source-list label, .style-page .source-panel > p, .style-page .source-list small,
+.style-page .analyze-form > small, .style-page .style-card footer small, .style-page .style-metrics { color: #56667a; }
+.style-page .source-row { border-radius: 12px; border-color: #e2e8f2; background: #f4f7fc; }
+.style-page .analyze-form > label { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.style-page .source-label, .style-page .analyze-form input:not([type=checkbox]),
+.style-page .analyze-form select, .style-page .style-learning-panel select,
+.style-page .style-learning-panel input:not([type=checkbox]), .style-page .style-learning-panel textarea,
+.style-page .style-merge input:not([type=checkbox]), .style-page .style-merge select,
+.style-page .style-import-book select {
+  min-width: 0; border: 1px solid #ccd6e5; border-radius: 10px; color: #26364b; background: #fff;
+}
+.style-page .analyze-form input:not([type=checkbox]), .style-page .analyze-form select,
+.style-page .style-learning-panel select, .style-page .style-learning-panel input:not([type=checkbox]) { min-height: 40px; }
+.style-page .style-learning-panel .style-scope-label { display: flex; flex-direction: column; align-items: stretch; gap: 6px; width: 100%; }
+.style-page .style-empty { border: 1px solid rgba(255,255,255,.95); border-radius: 20px; background: rgba(249,251,255,.78); color: #52627b; }
+.style-page .style-empty p, .style-page .style-card > p { color: #4d5e75; }
+.style-page .style-import-book, .style-page .style-merge { border-color: #dfe6f0; }
+.style-page button:focus-visible, .style-page input:focus-visible, .style-page select:focus-visible,
+.style-page textarea:focus-visible, .style-page summary:focus-visible { outline: 2px solid #4663a1; outline-offset: 2px; }
+.style-page .style-card footer > div { gap: 8px; }
+.style-page .style-card footer button { margin-left: 0; min-height: 34px; border-radius: 10px; }
+/* Shared modal surface only: retain each dialog's own layout, data and danger styling. */
+.app-shell .book-modal { border: 1px solid rgba(255,255,255,.95); border-radius: 22px; color: #253348; box-shadow: 0 18px 48px rgba(35,46,74,.18), inset 0 1px 0 #fff; }
+.app-shell .book-modal > header h2 { color: #253348; }
+.app-shell .book-modal > footer { border-color: #e2e8f2; }
+.app-shell .book-modal input:not([type=checkbox]):not([type=radio]),
+.app-shell .book-modal select, .app-shell .book-modal textarea { border-color: #ccd6e5; border-radius: 10px; }
+@media (max-width: 900px) { .style-page .studio-layout { grid-template-columns: minmax(0,1fr); } }
+@media (forced-colors: active) {
+  .style-page .source-panel, .style-page .style-card, .style-page .style-learning-panel,
+  .style-page .style-empty, .style-page .source-row, .app-shell .book-modal { background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none; backdrop-filter: none; }
+  .style-page button:focus-visible, .style-page input:focus-visible, .style-page select:focus-visible,
+  .style-page textarea:focus-visible, .style-page summary:focus-visible { outline-color: Highlight; }
+}

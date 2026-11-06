@@ -68,8 +68,9 @@ async function main() {
     const beforeRejectedRequest = requests;
     await assert.rejects(page.evaluate(value => window.writer.startAI(value), request), /未关联/u);
     assert.equal(requests, beforeRejectedRequest, 'Detached project must not start a new model request');
+    await page.evaluate(() => { (window as any).__removedProjectEvents = 0; });
     await fs.writeFile(path.join(folder, chapter.path), original);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(2000);
     assert.equal(await page.evaluate(() => (window as any).__removedProjectEvents), 0, 'Detached chapter watcher must stop');
     assert.deepEqual(JSON.parse(await fs.readFile(path.join(local, 'library.json'), 'utf8')), []);
     console.log(`Project detach safety desktop passed: exit token, running model refusal/cancellation, original preservation, removed-ID request rejection, watcher cleanup. ${fixture}`);

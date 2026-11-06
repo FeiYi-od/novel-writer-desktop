@@ -40,3 +40,18 @@
   .characters-page textarea:focus-visible,
   .characters-page summary:focus-visible { outline-color: Highlight; }
 }
+.setting-book-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.setting-book-progress p { flex-basis: 100%; margin: 0; }
+.setting-book-progress progress { flex: 1 1 180px; max-width: 360px; accent-color: #6683aa; }
+.setting-book-progress small { flex-basis: 100%; line-height: 1.5; }
+.setting-scope { margin: 10px 0; }
+.setting-scope-selection { margin-top: 8px; padding: 10px; border: 1px solid #dbe3ed; border-radius: 10px; background: #f5f8fc; }
+.setting-scope-selection p { margin: 4px 0 8px; color: #67778b; font-size: 12px; }
+.setting-scope-selection .actions, .setting-scope-range { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 8px 0; }
+.setting-scope-range input { width: 66px; padding: 5px; }
+.setting-scope-list { display: grid; gap: 5px; max-height: 180px; overflow-y: auto; padding: 5px 0; }
+.book-modal .setting-scope-list label { display: flex; flex-direction: row; align-items: flex-start; gap: 7px; min-width: 0; font-size: 12px; }
+.book-modal .setting-scope-list input[type=checkbox] { width: auto; flex: 0 0 auto; margin: 2px 0 0; }
+.setting-scope-list span { overflow-wrap: anywhere; }
+.book-modal label.setting-retry-choice { display: flex; flex-direction: row; align-items: center; gap: 7px; margin: 10px 0; font-size: 12px; }
+.book-modal label.setting-retry-choice input { width: auto; flex: 0 0 auto; }

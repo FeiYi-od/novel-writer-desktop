@@ -9,28 +9,49 @@ export function BookCover({ title, src, small = false }: { title: string; src?: 
   </div>;
 }
 
-export function Shelf({ projects, books, busy, onOpen, onSave, onRemove }: {
+export function Shelf({ projects, books, busy, onOpen, onSave, onRemove, onCreate, onRenameFolder }: {
   projects: Project[]; books: Record<string, BookSnapshot>; busy: boolean;
   onOpen: (project: Project) => void;
   onSave: (id: string, value: BookDetails, hash: string) => Promise<BookSnapshot>;
   onRemove: (project: Project) => Promise<void>;
+  onRenameFolder: (project: Project, name: string) => Promise<void>;
+  onCreate: (parent: string, title: string, firstChapter: boolean, extra: { introduction: string; coverBase64?: string }) => Promise<{ root: string }>;
 }) {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Project | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [renamingFolder, setRenamingFolder] = useState<Project | null>(null);
   const query = search.trim().toLocaleLowerCase();
   const filtered = projects.filter(p => (books[p.id]?.value.title ?? p.name).toLocaleLowerCase().includes(query));
   return <section className="library-page">
-    <div className="page-title"><div><span className="eyebrow">YOUR PERSONAL LIBRARY</span><h1>我的书架<span>{projects.length} 部作品</span></h1><p>每一个世界，都有自己的书页。</p></div><input aria-label="搜索书架" placeholder="搜索作品名称…" value={search} onChange={e => setSearch(e.target.value)} /></div>
+    <div className="page-title"><div><span className="eyebrow">YOUR PERSONAL LIBRARY</span><h1>我的书架<span>{projects.length} 部作品</span></h1><p>每一个世界，都有自己的书页。</p></div><div className="shelf-title-actions"><input aria-label="搜索书架" placeholder="搜索作品名称…" value={search} onChange={e => setSearch(e.target.value)} /><button className="primary" data-testid="new-book-open" disabled={busy} onClick={() => setCreating(true)}>＋ 新建小说</button></div></div>
     <div className="shelf-grid">{filtered.map(project => {
       const book = books[project.id]; const title = book?.value.title ?? project.name;
       return <article className="shelf-card" key={project.id}>
         <button className="cover-button" disabled={busy} aria-label={`打开作品 ${title}`} onClick={() => onOpen(project)}><BookCover title={title} src={book?.covers[book.value.cover]} /></button>
-        <div className="card-details"><div className="card-meta">{book?.value.volumes.length ?? 0} 个分集</div><h2 title={title}>{title}</h2><p>{book?.value.introduction || '为这部小说写一段引言，让故事从这里开始。'}</p><div className="card-actions"><button className="primary" disabled={busy} onClick={() => onOpen(project)}>进入创作 →</button><button disabled={busy || !book} aria-label={`编辑作品 ${title}`} onClick={() => setEditing(project)}>封面与分集</button><button className="shelf-remove" disabled={busy || !!editing} aria-label={`从书架移除 ${title}`} title="移除仅取消书架关联，原文件保留" onClick={() => void onRemove(project)}>移除</button></div></div>
+        <div className="card-details"><div className="card-meta">{book?.value.volumes.length ?? 0} 个分集</div><h2 title={title}>{title}</h2><p>{book?.value.introduction || '为这部小说写一段引言，让故事从这里开始。'}</p><div className="card-actions"><button className="primary" disabled={busy} onClick={() => onOpen(project)}>进入创作 →</button><button disabled={busy || !book} aria-label={`编辑作品 ${title}`} onClick={() => setEditing(project)}>书名、封面与分集</button><button disabled={busy || !!editing} aria-label={`修改文件夹名称 ${title}`} onClick={() => setRenamingFolder(project)}>文件夹改名</button><button className="shelf-remove" disabled={busy || !!editing} aria-label={`从书架移除 ${title}`} title="移除仅取消书架关联，原文件保留" onClick={() => void onRemove(project)}>移除</button></div></div>
       </article>;
     })}</div>
     {!filtered.length && <div className="empty-library" role="status"><b>{projects.length ? '没有找到这部作品' : '你的下一部小说，从这里开始'}</b><p>{projects.length ? '试试其他作品名称，或清除搜索条件。' : '点击右上角“打开小说文件夹”，将已有作品加入书架。'}</p>{projects.length > 0 && <button onClick={() => setSearch('')}>清除搜索</button>}</div>}
+    {creating && <NewBookWizard busy={busy} onCreate={onCreate} onClose={() => setCreating(false)} />}
     {editing && books[editing.id] && <BookEditor key={editing.id} project={editing} snapshot={books[editing.id]} onSave={onSave} onClose={() => setEditing(null)} />}
+    {renamingFolder && <FolderRename project={renamingFolder} onRename={onRenameFolder} onClose={() => setRenamingFolder(null)} />}
   </section>;
+}
+
+function FolderRename({ project, onRename, onClose }: { project: Project; onRename: (project: Project, name: string) => Promise<void>; onClose: () => void }) {
+  const original = project.root.split(/[\\/]/u).filter(Boolean).at(-1) ?? '';
+  const parent = project.root.slice(0, project.root.length - original.length);
+  const [name, setName] = useState(original), [working, setWorking] = useState(false), [error, setError] = useState('');
+  return <div className="modal-overlay"><section className="book-modal" role="dialog" aria-modal="true" aria-label="小说文件夹改名" style={{ width: 640, height: 'auto', maxHeight: '86vh', overflowY: 'auto', padding: '22px 26px' }}>
+    <header><div><h2>小说文件夹改名</h2><p>修改这本小说在当前电脑上的实际文件夹名称。</p></div><button disabled={working} onClick={onClose}>关闭</button></header>
+    {error && <div role="alert" className="error">{error}</div>}
+    <p style={{ overflowWrap: 'anywhere' }}>当前位置：<code>{project.root}</code></p>
+    <label>新的文件夹名称<input aria-label="新的小说文件夹名称" autoFocus disabled={working} maxLength={120} value={name} onChange={event => { setName(event.target.value); setError(''); }} /></label>
+    <p style={{ overflowWrap: 'anywhere' }}>改名后：<code>{parent}{name || '（请输入名称）'}</code></p>
+    <p>小说文件会留在原父目录，书架将更新位置；网络目录暂不支持，其他设备或使用旧路径的程序需要重新定位。操作前请先保存所有修改并结束模型任务。</p>
+    <footer><button disabled={working} onClick={onClose}>取消</button><button className="primary" disabled={working || !name.trim() || name === original} onClick={() => { setWorking(true); setError(''); void onRename(project, name).then(onClose).catch(failure => setError(String(failure instanceof Error ? failure.message : failure).replace(/^Error invoking remote method '[^']+': (?:Error: )?/u, ''))).finally(() => setWorking(false)); }}>{working ? '正在改名…' : '确认修改文件夹'}</button></footer>
+  </section></div>;
 }
 
 function BookEditor({ project, snapshot, onSave, onClose }: {
@@ -113,7 +134,7 @@ function BookEditor({ project, snapshot, onSave, onClose }: {
     <div className="volume-batch-actions"><button disabled={locked || !selectedVolumes.length} onClick={() => edit(current => moveVolumes(current, project.id, selectedVolumes, 'up'))}>上移所选分集</button><button disabled={locked || !selectedVolumes.length} onClick={() => edit(current => moveVolumes(current, project.id, selectedVolumes, 'down'))}>下移所选分集</button><button disabled={locked || !selectedVolumes.length} onClick={() => remove(selectedVolumes)}>删除所选分集</button><button disabled={locked || !selectedVolumes.length} onClick={() => setSelectedVolumes([])}>清空分集选择</button></div>
     <button disabled={locked || value.volumes.length >= 1000} onClick={() => { const id = crypto.randomUUID(); edit(current => ({ ...current, volumes: [...current.volumes, { id, title: `第 ${current.volumes.length + 1} 集`, introduction: '', cover: '', chapters: [] }] })); setSelected(id); }}>＋ 添加分集</button></nav>
     {entity && <div className="book-form" key={selected}><div className="cover-editor"><BookCover title={entity.title} src={covers[entity.cover]} /><button disabled={locked} onClick={() => void pickCover()}>选择{selected === 'book' ? '小说' : '分集'}封面</button>{entity.cover && <button disabled={locked} onClick={() => change({ cover: '' })}>移除封面</button>}<small>PNG / JPG / WebP，最大 8 MB</small></div>
-    <div className="book-fields"><label>{selected === 'book' ? '小说名称' : '分集名称'}<input disabled={locked} maxLength={200} value={entity.title} onChange={e => change({ title: e.target.value })} /></label><label>{selected === 'book' ? '小说引言' : '分集引言'}<textarea disabled={locked} maxLength={20000} value={entity.introduction} onChange={e => change({ introduction: e.target.value })} placeholder="故事关于什么？从一句引言开始。" /></label>
+      <div className="book-fields"><label>{selected === 'book' ? '小说名称' : '分集名称'}<input aria-label={selected === 'book' ? '小说名称' : '分集名称'} aria-describedby={selected === 'book' ? 'book-title-scope' : undefined} disabled={locked} maxLength={200} value={entity.title} onChange={e => change({ title: e.target.value })} />{selected === 'book' && <small id="book-title-scope">仅修改书架显示名称，不会重命名本地文件夹。</small>}</label><label>{selected === 'book' ? '小说引言' : '分集引言'}<textarea disabled={locked} maxLength={20000} value={entity.introduction} onChange={e => change({ introduction: e.target.value })} placeholder="故事关于什么？从一句引言开始。" /></label>
     <section className="chapter-assignment"><b>章节批量归属</b><small>分集调整仅保存目录资料；章节正文和封面原件保留。每章只属于一个分集，未列出的旧章节映射保留。</small>
     <input aria-label="筛选分集管理章节" disabled={locked || directoryFailed} value={filter} onChange={e => setFilter(e.target.value)} placeholder="筛选章节名称或完整路径" />
     <div className="chapter-batch-actions"><button disabled={locked || directoryFailed || !visibleChapters.length} onClick={() => setSelectedChapters(current => [...new Set([...current, ...visibleChapters.map(c => c.path)])])}>选择筛选章节</button><button disabled={locked || !selectedChapters.length} onClick={() => setSelectedChapters([])}>清空章节选择</button><span>已选 {selectedChapters.length} 章</span></div>
@@ -129,3 +150,32 @@ function BookEditor({ project, snapshot, onSave, onClose }: {
   </section></div>;
 }
 
+
+/** 新建小说向导：书名 → 存放位置 → 预览完整路径 → 创建（可选首章）。 */
+function NewBookWizard({ busy, onCreate, onClose }: {
+  busy: boolean; onCreate: (parent: string, title: string, firstChapter: boolean, extra: { introduction: string; coverBase64?: string }) => Promise<{ root: string }>; onClose: () => void;
+}) {
+  const [title, setTitle] = useState(''), [parent, setParent] = useState(''), [firstChapter, setFirstChapter] = useState(true);
+  const [busyLocal, setBusyLocal] = useState(false), [error, setError] = useState('');
+  const [introduction, setIntroduction] = useState(''), [cover, setCover] = useState<{ base64: string; dataUrl: string } | null>(null);
+  const locked = busy || busyLocal;
+  const preview = parent && title.trim() ? `${parent.replace(/[\\/]+$/u, '')}\\${title.trim().replace(/[<>:"/\\|?*]/gu, '')}` : '';
+  const create = async () => {
+    if (locked) return;
+    setError(''); setBusyLocal(true);
+    try { await onCreate(parent, title, firstChapter, { introduction, coverBase64: cover?.base64 }); onClose(); }
+    catch (failure) { setError(String(failure instanceof Error ? failure.message : failure).replace(/^Error invoking remote method '[^']+': (?:Error: )?/u, '')); }
+    finally { setBusyLocal(false); }
+  };
+  return <div className="modal-overlay"><section className="book-modal" role="dialog" aria-modal="true" aria-label="新建小说" style={{ width: 640, height: 'auto', maxHeight: '86vh', overflowY: 'auto', padding: '22px 26px' }}>
+    <header><div><h2>新建小说</h2><p>文件夹会在所选位置下新建；同名文件夹不会被复用。</p></div><button disabled={locked} onClick={onClose}>关闭</button></header>
+    {error && <div role="alert" className="error">{error}</div>}
+    <label>小说的名字<input aria-label="小说名字" data-testid="new-book-title" disabled={locked} maxLength={60} value={title} onChange={event => setTitle(event.target.value)} placeholder="例如：海上城邦" /></label>
+    <label>封面（可选）<div className="new-book-path"><button type="button" disabled={locked} data-testid="new-book-cover" onClick={() => void window.writer.pickCoverImage().then(picked => { if (picked) setCover(picked); }).catch(failure => setError(String(failure)))}>{cover ? '更换封面…' : '选择封面图片…'}</button>{cover && <img data-testid="new-book-cover-preview" alt="封面预览" src={cover.dataUrl} style={{ width: 52, height: 72, objectFit: 'cover', borderRadius: 6 }} />}<span className="fidelity-copy-help">PNG / JPG / WebP，最大 8 MB</span></div></label>
+    <label>引言（可选）<textarea aria-label="小说引言" data-testid="new-book-introduction" disabled={locked} maxLength={20000} rows={3} value={introduction} onChange={event => setIntroduction(event.target.value)} placeholder="一句话说明这部小说写什么。" /></label>
+    <label>存放位置<div className="new-book-path"><input aria-label="存放位置" data-testid="new-book-parent" disabled={locked} readOnly value={parent} placeholder="尚未选择" /><button type="button" disabled={locked} data-testid="new-book-pick" onClick={() => void window.writer.pickProjectParent().then(picked => { if (picked) setParent(picked); })}>选择位置…</button></div></label>
+    <p className="fidelity-copy-help" data-testid="new-book-preview">最终文件夹：{preview || '（选择位置并填写书名后显示）'}</p>
+    <label className="ai-check"><input type="checkbox" aria-label="同时创建首章" disabled={locked} checked={firstChapter} onChange={event => setFirstChapter(event.target.checked)} />同时创建第一章（DOCX，宋体五号、段首两个全角空格）</label>
+    <footer><span role="status">{busyLocal ? '正在创建…' : '创建后可在写作页继续导入已有章节'}</span><div><button disabled={locked} onClick={onClose}>取消</button><button className="primary" data-testid="new-book-create" disabled={locked || !title.trim() || !parent} onClick={() => void create()}>创建小说</button></div></footer>
+  </section></div>;
+}

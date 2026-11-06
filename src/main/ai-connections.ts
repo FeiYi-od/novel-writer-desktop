@@ -60,6 +60,33 @@ export class AIConnections {
     catch { throw new Error('本机无法解密此密钥，请重新填写后保存'); }
     return { profile: { ...profile, hasKey: !!encryptedKey }, key };
   }
+  /** 删除模型连接：只删本机连接配置；历史任务记录保留但会用"连接不存在"提示，不会静默改用其它连接。 */
+  remove(id: string, expectedHash: string): Promise<AIConnectionSnapshot> {
+    const result = this.queue.then(async () => {
+      const target = z.uuid().parse(id);
+      const stored = await this.stored();
+      if (stored.hash !== expectedHash) throw new Error('AI 连接已更新，请重新加载后删除');
+      if (!stored.value.connections.some(item => item.id === target)) throw new Error('模型连接不存在，可能已删除');
+      const value = storedSchema.parse({ schemaVersion: 1, connections: stored.value.connections.filter(item => item.id !== target) });
+      await fs.mkdir(path.dirname(this.file), { recursive: true });
+      const temp = `${this.file}.${randomUUID()}.tmp`;
+      try {
+        await fs.writeFile(temp, JSON.stringify(value, null, 2), { flag: 'wx' });
+        // 与 save 一致：备份是异步 I/O，替换前再核对一次哈希，避免删除覆盖别人的并发修改。
+        if ((await this.stored()).hash !== expectedHash) throw new Error('AI 连接文件在删除期间被修改');
+        await keepPreviousCopy(this.file);
+        if ((await this.stored()).hash !== expectedHash) throw new Error('AI 连接文件在删除期间被修改');
+        await fs.rename(temp, this.file);
+      } catch (error) {
+        await fs.unlink(temp).catch(() => {});
+        throw error;
+      }
+      return this.read();
+    });
+    this.queue = result.catch(() => {});
+    return result;
+  }
+
   save(input: AIConnectionEdit, expectedHash: string): Promise<AIConnectionSnapshot> {
     const result = this.queue.then(async () => {
       const edit = editSchema.parse(input);

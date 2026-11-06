@@ -1,0 +1,316 @@
+/* 材质分层 token：一处定义背景/模糊/高光/描边，浮层与卡片引用同一套，
+   避免每个页面各自写 rgba 与 blur 值。正文区不在选择范围内，保持不透明。 */
+:root {
+  --glass-blur: 18px;
+  --glass-blur-strong: 24px;
+  --glass-surface-1: rgba(255, 255, 255, .72);
+  --glass-surface-2: rgba(255, 255, 255, .86);
+  --glass-highlight: inset 0 1px 0 #fff;
+  --glass-border-soft: rgba(255, 255, 255, .9);
+}
+
+.app-shell > .topbar,
+.app-shell .sidebar,
+.app-shell .book-modal,
+.app-shell .topbar-more-panel {
+  background: var(--glass-surface-1);
+  border-color: var(--glass-border-soft);
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+/* Many books can be visible at once. Keep the translucent surface but avoid
+   one expensive backdrop blur per book; navigation retains the glass effect. */
+.app-shell .shelf-card .card-details {
+  background: var(--glass-surface-1);
+  border-color: var(--glass-border-soft);
+  backdrop-filter: none;
+}
+
+.app-shell .book-modal,
+.app-shell .topbar-more-panel {
+  background: var(--glass-surface-2);
+  backdrop-filter: blur(var(--glass-blur-strong));
+}
+
+/* 正文与编辑区始终不透明，避免长时间阅读时背景干扰。 */
+.app-shell .editor-host,
+.app-shell .manuscript,
+.app-shell .chapter-list,
+.app-shell .full-view:not([hidden]) .library-page {
+  backdrop-filter: none;
+}
+
+/* 系统"减少透明效果"：直接换成不透明浅色，去掉模糊与高光。 */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-blur: 0px;
+    --glass-blur-strong: 0px;
+    --glass-surface-1: #f7f8fc;
+    --glass-surface-2: #ffffff;
+    --glass-highlight: none;
+  }
+  .app-shell > .topbar,
+  .app-shell .sidebar,
+  .app-shell .book-modal,
+  .app-shell .topbar-more-panel,
+  .app-shell .shelf-card .card-details {
+    backdrop-filter: none;
+  }
+}
+
+/* Windows 强制配色：使用系统颜色，关闭模糊与阴影，保证对比度。 */
+@media (forced-colors: active) {
+  :root {
+    --glass-blur: 0px;
+    --glass-blur-strong: 0px;
+    --glass-surface-1: Canvas;
+    --glass-surface-2: Canvas;
+    --glass-highlight: none;
+    --glass-border-soft: CanvasText;
+  }
+  .app-shell > .topbar,
+  .app-shell .sidebar,
+  .app-shell .book-modal,
+  .app-shell .topbar-more-panel,
+  .app-shell .shelf-card .card-details {
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+}
+
+/* 文风档案删除：危险动作与主操作分层（放在最后引入的文件里，确保覆盖基础样式）。 */
+.app-shell .style-card footer .style-remove { color: #8a4b45; border-color: #e4d6d3; background: transparent; }
+.app-shell .style-card footer .style-remove:hover:not(:disabled) { color: #b42318; border-color: #e0b4ae; background: #fff6f5; }
+.app-shell .style-card footer > div { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* 参考文本行：文件名独占一行（单行省略），作者/作品在第二行等宽排布，避免窄栏把文件名挤成竖排。 */
+.app-shell .style-page .source-list .source-row { display: grid; gap: 7px; padding: 11px 0; align-items: stretch; }
+.app-shell .style-page .source-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.app-shell .style-page .source-row-main > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell .style-page .source-row-main > span small { display: block; margin-top: 3px; }
+.app-shell .style-page .source-row-main .source-remove { flex: 0 0 auto; margin-left: 0; }
+.app-shell .style-page .source-row-labels { display: flex; gap: 6px; min-width: 0; }
+.app-shell .style-page .source-row-labels .source-label { flex: 1 1 0; min-width: 0; width: auto; padding: 5px 7px; font-size: 12px; }
+
+/* 应用内确认框：与玻璃界面同一套材质，替代浏览器原生 confirm。 */
+.confirm-overlay { z-index: 80; }
+.confirm-dialog { width: 380px; max-width: 100%; padding: 18px 20px 14px; border-radius: 16px; border: 1px solid var(--glass-border-soft, #e3e7da); background: var(--glass-surface-2, #fbfcf7); backdrop-filter: blur(var(--glass-blur-strong, 24px)); box-shadow: 0 24px 70px rgba(23, 35, 19, .28); display: grid; gap: 10px; }
+.confirm-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.confirm-dialog h2 { margin: 0; font-size: 15px; font-weight: 600; color: #26313a; }
+.confirm-dialog > header button { border: 0; background: transparent; color: #8a9099; font-size: 14px; padding: 2px 6px; cursor: pointer; }
+.confirm-message { margin: 4px 0 0; font-size: 13px; line-height: 1.7; color: #3c4652; }
+.confirm-detail { margin: 0; font-size: 12px; line-height: 1.7; color: #6d7784; }
+.confirm-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.confirm-dialog > footer button { min-width: 76px; padding: 7px 12px; border-radius: 8px; border: 1px solid #d9dee6; background: #fff; color: #3c4652; font-size: 13px; cursor: pointer; }
+.confirm-dialog > footer button.danger { border-color: #b42318; background: #b42318; color: #fff; }
+.confirm-dialog > footer button.danger:hover { background: #971d13; }
+@media (forced-colors: active) { .confirm-dialog { border-color: CanvasText; } }
+
+/* 书架卡片：恢复「书封 + 详细信息」的横向书卡布局，避免玻璃样式把封面拉成整块大灰板。 */
+.app-shell .library-page .shelf-card {
+  display: flex; flex-direction: row; align-items: stretch; gap: 18px;
+  padding: 18px; min-height: 232px; border: 1px solid #e1e4df; border-radius: 14px;
+  background: #fff; box-shadow: 0 3px 12px rgba(30, 38, 32, .045);
+}
+.app-shell .library-page .cover-button { flex: 0 0 auto; align-self: flex-start; width: auto !important; max-width: none !important; margin-inline: 0 !important; }
+.app-shell .library-page .cover-art:not(.small) {
+  width: 120px !important; height: 180px !important; aspect-ratio: auto !important; border-radius: 4px 8px 8px 4px;
+  background: linear-gradient(150deg, #434b48, #737e77 75%, #a4aca6);
+}
+.app-shell .library-page .cover-title { font-size: 20px; letter-spacing: 3px; padding: 14px 10px; }
+.app-shell .library-page .card-details { flex: 1 1 auto; min-width: 0; padding: 2px 0; display: flex; flex-direction: column; }
+.app-shell .library-page .card-meta { font-size: 11px; color: #66746a; }
+.app-shell .library-page .card-details h2 { font-size: 21px; margin: 8px 0 10px; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.app-shell .library-page .card-details > * { max-width: 100%; }
+.app-shell .library-page .card-actions button { white-space: nowrap; }
+.app-shell .library-page .card-details p { margin: 0 0 14px; color: #5d6b61; -webkit-line-clamp: 3; }
+.app-shell .library-page .card-actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.app-shell .library-page .card-actions button { min-height: 34px; font-size: 12px; }
+@media (max-width: 700px) {
+  .app-shell .library-page .shelf-card { flex-direction: column; }
+  .app-shell .library-page .cover-art:not(.small) { width: 108px; height: 162px; }
+}
+
+.app-shell .library-page .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); }
+
+/* 章节列表：长文件名单行省略，保持每行等高；完整路径仍在 title 里可悬停查看。 */
+.app-shell .workspace .chapter-list button { display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; padding: 10px 9px; }
+.app-shell .workspace .chapter-list .chapter-icon { flex: 0 0 auto; color: #8a927f; }
+.app-shell .workspace .chapter-list .chapter-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* 侧栏工具按钮：统一单行，避免「＋ 新建 DOCX 章节」这类标签折行撑破虚线框。 */
+.app-shell .workspace .sidebar .sidebar-tools-content > button {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12px; padding: 8px 10px; min-height: 32px; width: 100%;
+}
+.app-shell .workspace .sidebar .new-chapter { margin-inline: 0; }
+
+.app-shell .workspace .sidebar .new-chapter,
+.app-shell .workspace .sidebar .import-chapters {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12px; padding: 8px 10px; min-height: 32px; width: 100%;
+}
+
+/* 人物关系弹窗：原样式缺失导致表单挤成一行；补成两列表单 + 关系清单 + 固定底栏。 */
+.app-shell .book-modal.relations-modal { width: min(760px, 94vw); height: auto; max-height: 90vh; }
+.app-shell .relations-modal > header { padding: 20px 24px 14px; }
+.app-shell .relations-modal > header h2 { font-size: 19px; margin: 0 0 6px; }
+.app-shell .relations-modal > header p { margin: 0; font-size: 12px; line-height: 1.8; color: #6d7768; }
+.app-shell .relations-modal > p[role=status] { margin: 8px 24px 0; font-size: 12px; color: #47623d; }
+.app-shell .relations-modal > .error { margin: 10px 24px 0; }
+.app-shell .relations-form {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 14px;
+  padding: 16px 24px; border-bottom: 1px solid #e3e7da;
+}
+.app-shell .relations-form > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; color: #67765c; }
+.app-shell .relations-form > label.ai-check { flex-direction: row; align-items: center; gap: 8px; grid-column: 1 / -1; margin-top: 2px; }
+.app-shell .relations-form select,
+.app-shell .relations-form input[type=text],
+.app-shell .relations-form input:not([type]),
+.app-shell .relations-form input[type=checkbox] { font: inherit; }
+.app-shell .relations-form select,
+.app-shell .relations-form input:not([type=checkbox]) {
+  width: 100%; min-width: 0; height: 34px; padding: 6px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; color: #3c4a36; font-size: 12px;
+}
+.app-shell .relations-form > label:nth-of-type(6) { grid-column: 1 / -1; }
+.app-shell .relations-form textarea { width: 100%; min-height: 64px; max-height: 120px; resize: vertical; padding: 8px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; line-height: 1.7; }
+.app-shell .relations-form > button { grid-column: 1 / -1; justify-self: end; min-width: 104px; min-height: 34px; font-size: 12px; }
+.app-shell .relations-groups { flex: 1; min-height: 0; overflow: auto; padding: 6px 24px 12px; }
+.app-shell .relations-groups section { margin-top: 14px; }
+.app-shell .relations-groups h3 { margin: 0 0 8px; font-size: 12px; color: #4f6446; }
+.app-shell .relations-groups ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.app-shell .relations-groups li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #e3e7da; border-radius: 8px; background: #fbfcf8; font-size: 12px; color: #3f4d3a; }
+.app-shell .relations-groups li > small { color: #77836d; min-width: 0; overflow-wrap: anywhere; }
+.app-shell .relations-groups li > button { margin-left: auto; flex: 0 0 auto; font-size: 11px; padding: 5px 9px; }
+.app-shell .relations-modal > p { margin: 16px 24px; font-size: 12px; color: #7a8870; }
+.app-shell .relations-modal > footer { padding: 14px 24px; border-top: 1px solid #e3e7da; }
+
+/* 场景分析 / 设定提取：补上缺失的版式，避免「一大片空白 + 控件挤在左上角」。 */
+.app-shell .book-modal.scene-modal { width: min(680px, 94vw); height: auto; max-height: 88vh; overflow: auto; padding: 24px 26px; }
+.app-shell .scene-modal > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border: 0; padding: 0 0 12px; }
+.app-shell .scene-modal > header h2 { margin: 0 0 6px; font-size: 19px; }
+.app-shell .scene-modal > header p { margin: 0; font-size: 12px; line-height: 1.8; color: #6d7768; }
+.app-shell .scene-modal > p { font-size: 12px; line-height: 1.9; color: #6d7768; margin: 8px 0 0; }
+.app-shell .scene-modal .notice { margin: 10px 0; }
+.app-shell .scene-table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+.app-shell .scene-table th, .app-shell .scene-table td { border: 1px solid #e3e7da; padding: 8px 10px; font-size: 12px; text-align: left; }
+.app-shell .scene-table th { width: 88px; background: #f5f7ef; color: #5f6f55; font-weight: 500; }
+.app-shell .scene-modal h3 { font-size: 13px; margin: 16px 0 8px; color: #4f6446; }
+.app-shell .scene-suggestions { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.9; color: #5d6b55; }
+.app-shell .scene-modal > footer { display: flex; justify-content: flex-end; gap: 8px; border: 0; padding: 16px 0 0; }
+
+.app-shell .book-modal[data-testid="setting-extract"] {
+  width: min(780px, 94vw); height: auto; max-height: 88vh; overflow: auto; padding: 22px 26px;
+}
+.app-shell [data-testid="setting-extract"] > header { align-items: flex-start; gap: 16px; border: 0; padding: 0 0 12px; }
+.app-shell [data-testid="setting-extract"] > header h2 { margin: 0 0 6px; font-size: 19px; }
+.app-shell [data-testid="setting-extract"] > header p { margin: 0; font-size: 12px; line-height: 1.8; color: #6d7768; }
+.app-shell [data-testid="setting-extract"] > header > button { white-space: nowrap; flex: 0 0 auto; }
+.app-shell [data-testid="setting-extract"] > label { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 14px; font-size: 12px; color: #5f6f55; }
+.app-shell [data-testid="setting-extract"] textarea { width: 100%; min-height: 190px; resize: vertical; padding: 10px 12px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font: 13px/1.8 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; color: #3c4a36; }
+.app-shell [data-testid="setting-extract"] .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.app-shell [data-testid="setting-extract"] .actions select { max-width: 100%; min-height: 32px; }
+.app-shell [data-testid="setting-extract"] .actions button { white-space: nowrap; }
+.app-shell [data-testid="setting-extract"] .actions small { flex: 1 1 100%; font-size: 11px; line-height: 1.7; color: #77836d; }
+.app-shell [data-testid="setting-extract"] .setting-candidates { display: grid; gap: 6px; margin-top: 10px; }
+.app-shell [data-testid="setting-extract"] .setting-candidates > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e3e7da; border-radius: 8px; background: #fbfcf8; }
+.app-shell [data-testid="setting-extract"] .setting-candidates > div > span { flex: 1 1 200px; min-width: 0; }
+.app-shell [data-testid="setting-extract"] .setting-candidates select { max-width: 100%; }
+
+.app-shell .book-modal > header > button { white-space: nowrap; flex: 0 0 auto; }
+
+/* 人物状态 / 故事时间线 / 提示词库：补齐缺失的版式，表单不再挤成一行。 */
+.app-shell .book-modal.states-modal,
+.app-shell .book-modal.timeline-modal { width: min(780px, 94vw); height: auto; max-height: 88vh; overflow: auto; padding: 22px 26px; }
+.app-shell .states-modal > header, .app-shell .timeline-modal > header { border: 0; padding: 0 0 10px; }
+.app-shell .states-modal > header h2, .app-shell .timeline-modal > header h2 { margin: 0 0 6px; font-size: 19px; }
+.app-shell .states-modal > header p, .app-shell .timeline-modal > header p { margin: 0; font-size: 12px; line-height: 1.8; color: #6d7768; }
+.app-shell .states-form, .app-shell .timeline-form { display: grid; gap: 10px 12px; align-items: end; padding: 12px 0 14px; border-bottom: 1px solid #e3e7da; }
+.app-shell .states-form { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.app-shell .timeline-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); }
+.app-shell .states-form > label, .app-shell .timeline-form > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; color: #5f6f55; }
+.app-shell .states-form > label:last-of-type, .app-shell .timeline-form > label:last-of-type { grid-column: 1 / -1; }
+.app-shell .states-form input, .app-shell .states-form select, .app-shell .timeline-form input, .app-shell .timeline-form select { width: 100%; min-width: 0; height: 34px; padding: 6px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; }
+.app-shell .states-form textarea, .app-shell .timeline-form textarea { width: 100%; min-height: 60px; max-height: 120px; resize: vertical; padding: 8px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; line-height: 1.7; }
+.app-shell .states-form > button, .app-shell .timeline-form > button { grid-column: 1 / -1; justify-self: end; min-width: 104px; min-height: 34px; font-size: 12px; }
+.app-shell .states-groups, .app-shell .timeline-list { max-height: 300px; overflow: auto; margin: 10px 0 0; }
+.app-shell .states-groups h3 { margin: 12px 0 6px; font-size: 12px; color: #4f6446; }
+.app-shell .states-groups ul, .app-shell .timeline-list { list-style: none; padding: 0; }
+.app-shell .states-groups li, .app-shell .timeline-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #e3e7da; border-radius: 8px; background: #fbfcf8; font-size: 12px; margin-bottom: 6px; }
+.app-shell .states-groups li > button, .app-shell .timeline-list li > button { margin-left: auto; flex: 0 0 auto; font-size: 11px; padding: 5px 9px; }
+.app-shell .states-modal > footer, .app-shell .timeline-modal > footer { border: 0; padding: 14px 0 0; }
+
+.app-shell .book-modal.prompts-modal { width: min(880px, 94vw); height: auto; max-height: 90vh; overflow: auto; padding: 22px 26px; }
+.app-shell .prompts-modal > header { border: 0; padding: 0 0 10px; }
+.app-shell .prompts-modal > header h2 { margin: 0 0 6px; font-size: 19px; }
+.app-shell .prompts-modal > header p { margin: 0; font-size: 12px; line-height: 1.8; color: #6d7768; }
+.app-shell .prompt-new { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1.6fr) auto; gap: 10px 12px; align-items: start; padding: 12px 0 14px; border-bottom: 1px solid #e3e7da; }
+.app-shell .prompt-new > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; color: #5f6f55; }
+.app-shell .prompt-new input, .app-shell .prompt-new select, .app-shell .prompt-new textarea { width: 100%; min-width: 0; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; padding: 7px 9px; }
+.app-shell .prompt-new input, .app-shell .prompt-new select { height: 34px; }
+.app-shell .prompt-new textarea { min-height: 66px; resize: vertical; }
+.app-shell .prompt-new > button { white-space: nowrap; min-height: 34px; align-self: end; }
+.app-shell .prompt-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 16px; margin-top: 14px; }
+.app-shell .prompt-layout aside { border-right: 1px solid #e3e7da; padding-right: 12px; max-height: 320px; overflow: auto; }
+.app-shell .prompt-layout aside h3, .app-shell .prompt-layout article h3 { font-size: 13px; margin: 0 0 8px; }
+.app-shell .prompt-layout article { min-width: 0; }
+.app-shell .prompt-layout article textarea { width: 100%; min-height: 170px; resize: vertical; padding: 10px; border: 1px solid #d9dfd2; border-radius: 8px; font-size: 12px; line-height: 1.8; }
+.app-shell .prompt-audit { margin-top: 14px; font-size: 12px; color: #6d7768; }
+.app-shell .prompts-modal > footer { border: 0; padding: 14px 0 0; }
+
+/* 分卷蓝图与整书替换：表单网格化，底部按钮沉底。 */
+.app-shell .book-modal.blueprint-modal,
+.app-shell .book-modal.replace-modal { width: min(720px, 94vw); height: auto; max-height: 88vh; overflow: auto; padding: 22px 26px; }
+.app-shell .blueprint-modal > header, .app-shell .replace-modal > header { border: 0; padding: 0 0 10px; }
+.app-shell .blueprint-modal > header h2, .app-shell .replace-modal > header h2 { margin: 0 0 6px; font-size: 19px; }
+.app-shell .blueprint-modal > header p, .app-shell .replace-modal > header p { margin: 0; font-size: 12px; line-height: 1.8; color: #6d7768; }
+.app-shell .blueprint-form { display: grid; grid-template-columns: 110px minmax(0, 1fr) minmax(0, 1.2fr); gap: 10px 12px; align-items: end; padding: 12px 0 14px; border-bottom: 1px solid #e3e7da; }
+.app-shell .blueprint-form > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; color: #5f6f55; }
+.app-shell .blueprint-form > label:nth-of-type(4), .app-shell .blueprint-form > label:nth-of-type(5) { grid-column: 1 / -1; }
+.app-shell .blueprint-form input, .app-shell .blueprint-form select { width: 100%; min-width: 0; height: 34px; padding: 6px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; }
+.app-shell .blueprint-form textarea { width: 100%; min-height: 66px; max-height: 140px; resize: vertical; padding: 8px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; line-height: 1.7; }
+.app-shell .blueprint-form > button { grid-column: 1 / -1; justify-self: end; min-width: 112px; min-height: 34px; font-size: 12px; }
+.app-shell .blueprint-list { list-style: none; margin: 10px 0 0; padding: 0; max-height: 300px; overflow: auto; }
+.app-shell .blueprint-list li { padding: 9px 10px; border: 1px solid #e3e7da; border-radius: 8px; background: #fbfcf8; font-size: 12px; margin-bottom: 6px; }
+.app-shell .blueprint-modal > footer { border: 0; padding: 14px 0 0; }
+
+.app-shell .replace-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 12px; align-items: end; padding: 12px 0 14px; border-bottom: 1px solid #e3e7da; }
+.app-shell .replace-form > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; color: #5f6f55; }
+.app-shell .replace-form > label.ai-check { flex-direction: row; align-items: center; gap: 8px; grid-column: 1 / -1; }
+.app-shell .replace-form input:not([type=checkbox]) { width: 100%; min-width: 0; height: 34px; padding: 6px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; }
+.app-shell .replace-form > .actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+.app-shell .replace-report { margin-top: 12px; font-size: 12px; color: #5d6b55; }
+.app-shell .replace-report ul { max-height: 220px; overflow: auto; padding-left: 18px; }
+.app-shell .replace-modal > footer { border: 0; padding: 14px 0 0; }
+
+/* 固定高度弹窗的底部按钮统一沉底，避免「关闭」浮在内容下面留一大片空白。 */
+.app-shell .book-modal > footer { margin-top: auto; }
+
+.app-shell .replace-modal > footer { justify-content: flex-end; gap: 8px; }
+
+/* 文风试写比较 / 文风版本与效果：补齐版式。 */
+.app-shell .book-modal.style-trial-modal,
+.app-shell .book-modal.style-history-modal { width: min(820px, 94vw); height: auto; max-height: 88vh; overflow: auto; padding: 22px 26px; }
+.app-shell .style-trial-modal > header, .app-shell .style-history-modal > header { border: 0; padding: 0 0 10px; }
+.app-shell .style-trial-modal > header h2, .app-shell .style-history-modal > header h2 { margin: 0 0 6px; font-size: 19px; }
+.app-shell .style-trial-modal > header p, .app-shell .style-history-modal > header p { margin: 0; font-size: 12px; line-height: 1.8; color: #6d7768; }
+.app-shell .trial-form { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 12px 0 14px; border-bottom: 1px solid #e3e7da; }
+.app-shell .trial-form > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; color: #5f6f55; }
+.app-shell .trial-form select { width: 100%; height: 34px; padding: 6px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; }
+.app-shell .trial-form textarea { width: 100%; min-height: 78px; resize: vertical; padding: 8px 9px; border: 1px solid #d9dfd2; border-radius: 8px; background: #fff; font-size: 12px; line-height: 1.7; }
+.app-shell .trial-styles { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 4px 0 0; padding: 9px 12px; border: 1px solid #e3e7da; border-radius: 8px; }
+.app-shell .trial-styles legend { padding: 0 4px; font-size: 11px; color: #5f6f55; }
+.app-shell .trial-styles label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.app-shell .trial-form > button { grid-column: 1 / -1; justify-self: end; min-width: 112px; min-height: 34px; font-size: 12px; }
+.app-shell .trial-result { margin-top: 12px; font-size: 12px; }
+.app-shell .trial-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+.app-shell .trial-table th, .app-shell .trial-table td { border: 1px solid #e3e7da; padding: 6px 8px; text-align: left; }
+.app-shell .trial-variants { display: grid; gap: 10px; }
+.app-shell .trial-variants article { border: 1px solid #e3e7da; border-radius: 8px; padding: 10px 12px; background: #fbfcf8; }
+.app-shell .trial-variants pre { max-height: 220px; overflow: auto; white-space: pre-wrap; font: 12px/1.8 "Microsoft YaHei UI", sans-serif; margin: 6px 0 0; }
+.app-shell .style-trial-modal > footer, .app-shell .style-history-modal > footer { border: 0; padding: 14px 0 0; }
+
+.app-shell .style-history-card { border: 1px solid #e3e7da; border-radius: 10px; padding: 12px 14px; margin-top: 10px; background: #fbfcf8; display: grid; gap: 6px; }
+.app-shell .style-history-card h3 { margin: 0; font-size: 13px; }
+.app-shell .style-history-card p { margin: 0; font-size: 12px; line-height: 1.8; color: #5d6b55; }
+.app-shell .style-history-card .actions { display: flex; flex-wrap: wrap; gap: 8px; }

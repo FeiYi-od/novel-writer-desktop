@@ -1109,7 +1109,7 @@ export class MaterialSyncService {
       await fs.mkdir(directory); const files = (await subDirectory(directory, 'files', true))!;
       const targetIdentity = () => Promise.all([base, directory, files].map(async folder => {
         const real = await checkedDirectory(folder), stat = await fs.lstat(folder);
-        return JSON.stringify({ real, dev: stat.dev, ino: stat.ino });
+        return JSON.stringify({ real, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs });
       }));
       const originalTargetIdentity = JSON.stringify(await targetIdentity()); await this.writeFiles(files, context.history);
       const sourceUnchanged = async () => {

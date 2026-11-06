@@ -22,3 +22,17 @@
 
 /* 内容很少的弹窗（如「还没有用量记录」）不该撑满 740px 空白：允许按内容收缩。 */
 .usage-modal,.key-modal{height:auto;min-height:0}
+
+/* 新建小说向导与章节导入 */
+.shelf-title-actions{display:flex;align-items:center;gap:12px}
+.shelf-title-actions input{width:200px}
+.new-book-path{display:flex;gap:8px;align-items:center;margin-top:6px}
+.new-book-path input{flex:1;min-width:0}
+.new-book-path button{white-space:nowrap}
+.import-chapters{margin:6px 0 2px}
+/* 参考文本与文风档案删除 */
+.source-list label{display:flex;align-items:center;gap:8px}
+.source-list .source-remove{margin-left:auto;background:transparent;border:1px solid var(--line,#2a2f3a);border-radius:6px;width:22px;height:22px;line-height:1;padding:0;color:inherit;opacity:.7}
+.source-list .source-remove:hover{opacity:1}
+.style-card footer .style-remove{background:transparent;border:1px solid var(--line,#2a2f3a);border-radius:6px;padding:4px 10px;color:inherit;opacity:.8}
+.style-card footer .style-remove:hover{opacity:1}

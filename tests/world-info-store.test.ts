@@ -176,3 +176,16 @@ test('角色卡内嵌世界书：没有独立世界书时仍能触发，且不�
   await f.store.import(f.project.id, '只在甲书', world({ '0': { key: ['月钥'], content: '甲书独立世界书' } }));
   assert.deepEqual(await f.store.context(second.id, '月钥'), { text: '', entries: 0, books: [] });
 });
+
+
+test('空章节注入常驻设定，超长命中不阻挡后续完整短条目', async t => {
+  const f = await fixture(t);
+  await f.store.import(f.project.id, '预算测试', world({
+    '0': { key: [], constant: true, content: '巨'.repeat(600), order: 100 },
+    '1': { key: [], constant: true, content: '常驻短设定', order: 10 },
+    '2': { key: ['星港'], content: '非空触发', order: 1 }
+  }));
+  const result = await f.store.context(f.project.id, '', undefined, { books: ['预算测试'], maxCharacters: 500 });
+  assert.equal(result.entries, 1); assert.match(result.text, /常驻短设定/u); assert.match(result.text, /1 条已命中设定/u);
+  assert.doesNotMatch(result.text, /非空触发|巨巨巨/u); assert.ok(result.text.length <= 500);
+});
